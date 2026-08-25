@@ -1,0 +1,22 @@
+# secrets
+.env
+docker/.env
+*.pem
+*.key
+
+# node
+node_modules/
+npm-debug.log*
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# local data / volumes if ever bind-mounted into the repo for testing
+vault-mirror/
+livesync-db/

@@ -1,0 +1,67 @@
+# Pebble Index Research Agent — server-side stack
+#
+# Assumes `minio` and `n8n` already exist elsewhere on this server/network. Add them here (or extend
+# your existing compose project with this file via `docker compose -f existing.yml -f docker-compose.yml`)
+# once their exact service names/networks are known.
+#
+# STATUS: skeleton only — service configs below are placeholders pending the spikes described in
+# docs/ARCHITECTURE.md. Do not deploy as-is.
+
+services:
+  # Keeps a plain-Markdown mirror of the Obsidian vault on disk, synced against the same MinIO/S3
+  # remote (or CouchDB) used by the phone's Self-hosted LiveSync plugin.
+  livesync-cli:
+    build:
+      context: https://github.com/vrtmrz/obsidian-livesync.git
+      dockerfile: src/apps/cli/Dockerfile
+    container_name: livesync-cli
+    restart: unless-stopped
+    command: ["daemon", "--vault", "/vault"]
+    volumes:
+      - livesync_db:/data
+      - vault_mirror:/vault
+    environment:
+      LIVESYNC_DB_PATH: /data
+    # TODO(spike-livesync-s3): confirm remote-add/setup flags for a MinIO/S3 remote + passphrase,
+    # and whether they're passed via settings.json, env vars, or CLI args.
+
+  # Self-hosted meta search engine backing the research MCP tool.
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    restart: unless-stopped
+    volumes:
+      - searxng_config:/etc/searxng
+    # TODO: enable JSON format in settings.yml so mcp-searxng can query it.
+
+  # Bridges the stdio obsidian-mcp server to an SSE endpoint n8n can call.
+  mcp-obsidian:
+    image: node:22-slim
+    container_name: mcp-obsidian
+    restart: unless-stopped
+    working_dir: /vault
+    volumes:
+      - vault_mirror:/vault
+    entrypoint: ["npx", "-y", "mcp-proxy", "--port", "8801", "--", "npx", "-y", "obsidian-mcp@2", "serve", "--vault", "notes=/vault"]
+    ports:
+      - "8801:8801"
+    # TODO(spike-mcp-bridge): confirm mcp-proxy invocation + SSE path n8n's MCP Client Tool node expects.
+
+  # Bridges the stdio mcp-searxng server to an SSE endpoint n8n can call.
+  mcp-searxng:
+    build:
+      context: https://github.com/SecretiveShell/MCP-searxng.git
+    container_name: mcp-searxng
+    restart: unless-stopped
+    environment:
+      SEARXNG_URL: http://searxng:8080
+    depends_on:
+      - searxng
+    ports:
+      - "8802:8802"
+    # TODO(spike-mcp-bridge): wrap entrypoint with mcp-proxy the same way as mcp-obsidian.
+
+volumes:
+  livesync_db:
+  vault_mirror:
+  searxng_config:
