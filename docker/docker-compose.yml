@@ -4,9 +4,9 @@
 # your existing compose project with this file via `docker compose -f existing.yml -f docker-compose.yml`)
 # once their exact service names/networks are known.
 #
-# STATUS: foundation validated (spike-livesync-s3, spike-mcp-bridge, server-base-setup) — networks and
-# secrets wiring below are real and tested; per-service bootstrap automation (vault-mirror-service,
-# searxng-service, etc.) is still pending. Do not deploy as-is without completing those.
+# STATUS: foundation + vault mirror validated (spike-livesync-s3, spike-mcp-bridge, server-base-setup,
+# vault-mirror-service) — networks, secrets, and the vault-mirror bind mounts below are real and tested.
+# searxng-service and later steps are still pending. Do not deploy as-is without completing those.
 #
 # Networking (validated server-base-setup, 2026-08-25): `n8n_n8n_internal` is n8n's own existing Docker
 # network (external to this project) — mcp-obsidian and mcp-searxng join it so n8n's MCP Client Tool
@@ -23,8 +23,15 @@ services:
   # already configured (via `init-settings` + `setup <Setup URI>` + a one-time `unlock-remote` for a
   # new device) before this service starts — see docs/SETUP.md Phase 1 for the exact bootstrap
   # sequence. That bootstrap is not yet automated here (still a manual one-time step, since it needs
-  # the Setup URI's passphrase entered interactively); `vault-mirror-service` will wire it up properly
-  # (e.g. an init container, or a documented `docker compose run` bootstrap command).
+  # the Setup URI's passphrase entered interactively).
+  #
+  # VALIDATED (vault-mirror-service): deployed as a real, persistent bind-mounted service (not the
+  # spike's scratch volumes) — `${VAULT_MIRROR_DATA_PATH}` and `${VAULT_MIRROR_PATH}` are host
+  # directories (see docker/.env), so other tools (mcp-obsidian, and later n8n's Local File Trigger,
+  # which isn't part of this compose project) can all point at the exact same host path. The vault
+  # directory needs a pre-existing `.obsidian/` folder (Journal Sync doesn't replicate it, and
+  # `obsidian-mcp` refuses a vault without one) — create it once on the host:
+  # `mkdir -p "$VAULT_MIRROR_PATH/.obsidian"`.
   livesync-cli:
     build:
       context: https://github.com/vrtmrz/obsidian-livesync.git
@@ -32,11 +39,12 @@ services:
     container_name: livesync-cli
     restart: unless-stopped
     command: ["--settings", "/data/livesync-settings.json", "--vault", "/vault", "daemon"]
+    env_file: .env
     volumes:
-      - livesync_db:/data
-      - vault_mirror:/vault
+      - ${VAULT_MIRROR_DATA_PATH:-./vault-mirror-data}:/data
+      - ${VAULT_MIRROR_PATH:-./vault-mirror-vault}:/vault
     # NOTE: the official image writes files as root (no non-root user configured) — anything else
-    # (mcp-obsidian, n8n Local File Trigger) reading/writing `vault_mirror` needs to tolerate that.
+    # (mcp-obsidian, n8n Local File Trigger) reading/writing the vault mirror needs to tolerate that.
 
   # Self-hosted meta search engine backing the research MCP tool.
   #
@@ -67,7 +75,7 @@ services:
     networks:
       - n8n_n8n_internal
     volumes:
-      - vault_mirror:/vault
+      - ${VAULT_MIRROR_PATH:-./vault-mirror-vault}:/vault
     ports:
       - "8801:8801"
 
@@ -100,6 +108,4 @@ networks:
     driver: bridge
 
 volumes:
-  livesync_db:
-  vault_mirror:
   searxng_config:

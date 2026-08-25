@@ -80,6 +80,35 @@ running.
 The server now ends up with a directory (e.g. `/srv/vault-mirror/`) that always mirrors the real vault
 as plain files — this is what n8n and the Obsidian MCP server both operate on.
 
+**✅ Validated (`vault-mirror-service`, 2026-08-25):** promoted the spike's scratch setup into a real,
+persistent Docker service.
+
+- `livesync-cli`'s `daemon` mode is now deployed against **host bind mounts**
+  (`VAULT_MIRROR_DATA_PATH` → `/data`, `VAULT_MIRROR_PATH` → `/vault`, both configured in `docker/.env`)
+  rather than anonymous Docker volumes, specifically so other containers (`mcp-obsidian`, and later n8n's
+  own compose stack, which this project doesn't manage) can mount the *exact same host path* by path
+  reference alone, no Docker volume-sharing tricks required.
+- A **fresh** persistent directory, seeded with only the already-bootstrapped `settings.json` (copied
+  from the spike's scratch config, not hand re-derived) and an empty `.obsidian/` folder, correctly
+  triggers a full initial "mirror scan" that pulls **all** existing remote documents down to plain
+  `.md` files on first start — confirmed via `[Daemon] Total files to synchronise: 9` /
+  `Synchronisation completed: ... 3 completed`. No local db state needs to be carried over from a prior
+  install; the encrypted remote is the actual source of truth.
+- **Confirmed true bidirectional live sync**, not just the remote→local direction validated in
+  `spike-livesync-s3`: with `daemon` running, a file created directly on the host bind mount
+  (`vault/_live-watch-test2.md`) was picked up by `livesync-cli`'s `chokidar`-based watcher and pushed
+  to the remote within ~2 seconds (`[Info] STORAGE -> DB (plain) _live-watch-test2.md`, run with
+  `--verbose`); deleting that same file locally correctly propagated as a remote deletion on the next
+  scan (`NEWER_WINS: Treating missing local file as deletion` → `DELETE DATABASE: <path>`).
+- **Root-ownership permission gotcha confirmed and characterized** (previously only theorized in
+  `spike-livesync-s3`): the container runs as root and any *new subdirectory* it creates under the vault
+  mount (e.g. `Index Inbox/`, materialized fresh from a remote-only file) ends up `root:root` mode
+  `755` — writable only by root. A host user can still create files directly in the **vault's top-level
+  directory** (owned by whichever user created that directory originally, e.g. via `mkdir`), but not
+  inside subdirectories the container itself created. This isn't blocking (the container is the
+  intended writer in production; a human wouldn't normally hand-edit the mirror on the server), but it
+  matters for future debugging/testing on this path — see `docs/TROUBLESHOOTING.md`.
+
 ## Trigger
 
 n8n's **Local File Trigger** node watches the ring-transcript subfolder inside the mounted mirror volume
@@ -191,6 +220,7 @@ live round-trip tool calls (not just a handshake check). Key findings:
 | `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 | `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
+| `vault-mirror-service` | Does a persistently deployed `livesync-cli daemon` container keep a real bidirectional plain-Markdown mirror on host bind mounts? | ✅ Validated — see findings above. Deployed against `/data/vault-mirror/{data,vault}` bind mounts (not anonymous volumes); confirmed real bidirectional sync (local create → remote push within ~2s; local delete → remote delete) with `--verbose` logging, not just the remote→local direction from `spike-livesync-s3`. |
 
 ## Deployment topology
 
@@ -199,7 +229,8 @@ Everything below runs as Docker containers on the existing headless Ubuntu serve
 
 - `minio` (already running)
 - `n8n` (already running — gains a read/write bind mount to the vault-mirror folder)
-- `livesync-cli` (new, `daemon` mode) — no explicit network needed (volumes + outbound HTTPS only)
+- `livesync-cli` (**deployed**, `daemon` mode) — no explicit network needed (bind mounts + outbound
+  HTTPS only); real data now lives at `/data/vault-mirror/{data,vault}` on the host
 - `searxng` (new) — on the project's own `pebble-agent-internal` network only, not reachable by n8n or
   the host directly
 - `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder) — on n8n's existing
@@ -209,8 +240,9 @@ Everything below runs as Docker containers on the existing headless Ubuntu serve
 
 **Project directory on the server:** `/data/projects/pebble-index-research-agent/repo` (a plain `git
 clone` of this repo, re-`git pull`-able on future updates). The real `docker/.env` (gitignored, MinIO
-creds + SearXNG config) lives alongside it there — never in this repo. See `docs/SETUP.md` Phase 0.5
-for the exact bootstrap commands and the reasoning behind the two-network split.
+creds + SearXNG config, plus `VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH`) lives alongside it there —
+never in this repo. See `docs/SETUP.md` Phase 0.5 for the network/env bootstrap and Phase 1 for the
+vault-mirror deployment.
 
 See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current (in-progress) service
 definitions.
