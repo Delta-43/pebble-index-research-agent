@@ -31,31 +31,41 @@ services:
     # (mcp-obsidian, n8n Local File Trigger) reading/writing `vault_mirror` needs to tolerate that.
 
   # Self-hosted meta search engine backing the research MCP tool.
+  #
+  # NOTE (spike-mcp-bridge): an existing n8n-searxng-1 container is already running on this server
+  # (part of n8n's own sandbox stack) with JSON format already enabled and reachable only via the
+  # internal n8n network — worth reusing instead of standing up a second instance; decide during
+  # searxng-service.
   searxng:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
     volumes:
       - searxng_config:/etc/searxng
-    # TODO: enable JSON format in settings.yml so mcp-searxng can query it.
+    # TODO: enable JSON format in settings.yml (`formats: [html, json]`) so mcp-searxng can query it.
 
   # Bridges the stdio obsidian-mcp server to an SSE endpoint n8n can call.
+  #
+  # VALIDATED (spike-mcp-bridge): built and tested against a real vault mirror + the real n8n container.
+  # Uses the real `sparfenyuk/mcp-proxy` (Python) — NOT `npx -y mcp-proxy`, which resolves to an
+  # unrelated npm package (see docs/TROUBLESHOOTING.md). The vault path needs a pre-existing (empty is
+  # fine) `.obsidian/` directory, since Journal Sync doesn't replicate it — not yet automated here.
   mcp-obsidian:
-    image: node:22-slim
+    build: ./mcp-obsidian
     container_name: mcp-obsidian
     restart: unless-stopped
-    working_dir: /vault
     volumes:
       - vault_mirror:/vault
-    entrypoint: ["npx", "-y", "mcp-proxy", "--port", "8801", "--", "npx", "-y", "obsidian-mcp@2", "serve", "--vault", "notes=/vault"]
     ports:
       - "8801:8801"
-    # TODO(spike-mcp-bridge): confirm mcp-proxy invocation + SSE path n8n's MCP Client Tool node expects.
 
   # Bridges the stdio mcp-searxng server to an SSE endpoint n8n can call.
+  #
+  # VALIDATED (spike-mcp-bridge): built and tested end-to-end (real live search results returned).
+  # mcp-searxng is installed from git source, not PyPI (PyPI 0.1.0 is incompatible with current
+  # SearXNG's JSON schema — see docs/TROUBLESHOOTING.md).
   mcp-searxng:
-    build:
-      context: https://github.com/SecretiveShell/MCP-searxng.git
+    build: ./mcp-searxng
     container_name: mcp-searxng
     restart: unless-stopped
     environment:
@@ -64,7 +74,6 @@ services:
       - searxng
     ports:
       - "8802:8802"
-    # TODO(spike-mcp-bridge): wrap entrypoint with mcp-proxy the same way as mcp-obsidian.
 
 volumes:
   livesync_db:

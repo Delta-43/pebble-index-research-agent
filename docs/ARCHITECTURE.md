@@ -97,16 +97,75 @@ tool servers via n8n's **MCP Client Tool** node:
    **SearXNG** meta search instance, so no third-party search API key is needed.
 
 Both are **stdio** MCP servers by design. n8n's built-in MCP Client Tool node expects an HTTP/SSE
-endpoint, so each is wrapped with **`mcp-proxy`** (`sparfenyuk/mcp-proxy`), which turns any stdio MCP
-server into an SSE endpoint with one command:
+endpoint, so each is wrapped with **`mcp-proxy`** (`sparfenyuk/mcp-proxy`, the Python package — see
+**⚠️ below**, this is easy to get wrong), which turns any stdio MCP server into an SSE endpoint with one
+command:
 
 ```
-mcp-proxy --port <port> -- <stdio command>
+mcp-proxy --port <port> --host 0.0.0.0 --pass-environment -- <stdio command>
 ```
 
 This keeps every tool as an independent, network-reachable container — nothing needs to be installed
-inside the n8n container itself. This bridging approach is the second thing to validate
-(`spike-mcp-bridge`).
+inside the n8n container itself.
+
+**✅ Validated (`spike-mcp-bridge`, 2026-08-25)** against real containers on `home_server`, including
+live round-trip tool calls (not just a handshake check). Key findings:
+
+- **⚠️ `npx -y mcp-proxy` is a trap — it is NOT `sparfenyuk/mcp-proxy`.** There is an unrelated npm
+  package also called `mcp-proxy` (`punkpeye/mcp-proxy`, "A TypeScript SSE proxy for MCP servers that
+  use stdio transport") that `npx` happily resolves instead, with a completely different CLI (`--server`,
+  `--sseEndpoint`, `--streamEndpoint`, camelCase flags, no `--port`/`--host`/`--pass-environment`). The
+  original `docker-compose.yml` skeleton used `npx -y mcp-proxy`, which would have silently bridged with
+  the *wrong tool*. The real `sparfenyuk/mcp-proxy` is a **Python** package — install it with
+  `pip`/`pipx`/`uv`, or run the official `ghcr.io/sparfenyuk/mcp-proxy` image; never `npx`.
+- **`mcp-proxy` (PyPI `0.12.0`) needs `mcp` pinned below `2.0`.** Its own `pyproject.toml` declares
+  `mcp>=1.27.1` (satisfied by 2.x too), but installing the latest `mcp` (2.1.0) breaks it at import time
+  (`ImportError: cannot import name 'request_ctx' from mcp.server.lowlevel.server` — a real upstream
+  API change in `mcp` 2.x that `mcp-proxy` 0.12.0 hasn't caught up to). Fix: `pip install 'mcp<2'
+  mcp-proxy` (resolves to `mcp==1.29.1`, which works).
+- **`mcp-proxy` does not forward environment variables to the spawned stdio child by default.** Without
+  `--pass-environment` (or explicit `-e KEY VALUE` per variable), `mcp-searxng`'s `SEARXNG_URL` env var
+  was invisible to the child process and every search call failed with a connection error. Always pass
+  `--pass-environment` (or explicit `-e`) when the wrapped server reads its config from the environment.
+- **`mcp-searxng`'s published PyPI package (`0.1.0`) is stale and incompatible with current SearXNG.**
+  Its `Response` Pydantic model requires a `number_of_results` field that this deployment's SearXNG no
+  longer returns from `/search?format=json` (confirmed via direct `curl`: the real JSON response has
+  `query`, `results`, `infoboxes`, `answers`, `corrections`, `suggestions`, `unresponsive_engines` — no
+  `number_of_results`). GitHub's `main` branch has already dropped that field from the model; the fix is
+  to install straight from source: `pip install git+https://github.com/SecretiveShell/MCP-searxng.git`
+  instead of `pip install mcp-searxng`.
+- **`obsidian-mcp@2` requires a pre-existing `.obsidian/` directory inside the vault path**, or it
+  refuses to treat the path as a valid vault. LiveSync's Journal Sync (per `spike-livesync-s3`) does
+  **not** replicate the `.obsidian/` config folder — only vault content — so the mirrored vault produced
+  by `livesync-cli` won't have one. `vault-mirror-service` needs to `mkdir -p` an (empty is fine)
+  `.obsidian/` directory once in the mirror path before `mcp-obsidian` starts.
+- **Confirmed working invocations** (both run as a single container combining the stdio server's own
+  runtime with a `pip`-installed `mcp-proxy`, since no off-the-shelf image bundles both):
+  - `obsidian-mcp`: `node:22-slim` base + `python3`/`pip` + `pip install 'mcp<2' mcp-proxy`, then
+    `mcp-proxy --port 8801 --host 0.0.0.0 --pass-environment -- npx -y obsidian-mcp@2 serve --vault
+    notes=/vault`.
+  - `mcp-searxng`: `python:3.12-slim` base + `git` + `pip install 'mcp<2' mcp-proxy
+    git+https://github.com/SecretiveShell/MCP-searxng.git`, then `mcp-proxy --port 8802 --host 0.0.0.0
+    --pass-environment -- mcp-searxng` (env `SEARXNG_URL=http://searxng:8080`).
+- Both expose SSE at `http://<container-name>:<port>/sse` (the default/unnamed-server path). Verified
+  reachable via Docker DNS from the *actual, already-running* `n8n` container on the shared
+  `n8n_n8n_internal` network — not just a throwaway test client — which is exactly the path n8n's MCP
+  Client Tool node will use.
+- **Round-tripped real MCP tool calls through each bridge**, not just the SSE handshake: `obsidian-mcp`
+  — `obsidian_list_vaults`, `obsidian_read_note` (real `Welcome.md` content), and a throwaway
+  `obsidian_create_note` + `obsidian_delete_note` (`mode: "permanent"`) cycle, verified removed from disk
+  afterwards; `mcp-searxng` — `search` returned real, live web results (e.g. real repebble.com /
+  pebblecart.com hits for "Pebble smartwatch").
+- `obsidian-mcp@2` logs a non-fatal `[LEGACY_MCP_PROTOCOL]` warning because `mcp-proxy` (built on the
+  `mcp<2` SDK) negotiates the older 2025-era `initialize` handshake rather than `2026-07-28`. Harmless
+  and expected — do **not** add `--legacy reject` to `obsidian-mcp`'s args, since that would make it
+  reject `mcp-proxy`'s connection outright.
+- **An existing SearXNG is already running** (`n8n-searxng-1`, part of n8n's own sandbox stack) with
+  `formats: [html, json]` already enabled in `settings.yml` and reachable only via the internal
+  `n8n_n8n_internal` Docker network (DNS alias `searxng`, no published host port) — i.e. already
+  isolated the way this project wants a dedicated `searxng` service to be. This makes reuse — rather
+  than standing up a second, separate SearXNG — worth strongly considering when `searxng-service`
+  executes; deferred to that todo since it also needs to weigh shared-resource/blast-radius concerns.
 
 ## Workflow logic (n8n)
 
@@ -130,7 +189,7 @@ inside the n8n container itself. This bridging approach is the second thing to v
 | Spike | Question | Status |
 |---|---|---|
 | `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
-| `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | Pending |
+| `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 
 ## Deployment topology
 
