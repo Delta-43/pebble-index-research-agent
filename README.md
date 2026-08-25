@@ -58,10 +58,13 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
 - [x] Validate stdio→SSE bridging for both MCP servers
 - [x] Docker Compose stack for the server (`livesync-cli`, dedicated `searxng`, `mcp-obsidian`,
       `mcp-searxng` — deployed and round-tripped real tool calls/searches on the real server)
-- [x] n8n workflow (trigger → agent → tools → save note) — built, imported, and round-tripped on the
-      real n8n instance, using an OpenRouter Chat Model node (any underlying model, one API key); not
-      yet activated (needs an OpenRouter credential added manually, see `docs/SETUP.md`)
-- [ ] End-to-end test with a real ring recording
+- [x] n8n workflow (trigger → agent → tools → save note) — built, imported, activated, and confirmed
+      working end-to-end on the real n8n instance, using OpenRouter (any underlying model, one API key)
+- [x] End-to-end test — agent half: a real dropped note triggered a real web search and produced a
+      real, correctly-tagged research note with a backlink, using a free OpenRouter model
+- [ ] End-to-end test — sync-back half: `livesync-cli` isn't yet confirmed to pick up and sync the
+      new/edited files back to the phone (see `docs/TROUBLESHOOTING.md`)
+- [ ] Test with a real ring recording (so far tested with a manually-dropped note)
 - [ ] Full documentation pass
 
 ## Prerequisites

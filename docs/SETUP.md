@@ -193,15 +193,30 @@ workflow JSON is committed at `n8n/workflows/pebble-index-research-agent.json`. 
 tested against a real note — that's Phase 4, and needs one manual step first (below) that only you can
 safely do, since it needs a real API key.
 
-**Step 1 — mount the vault mirror into n8n itself.** The Local File Trigger node runs inside n8n's own
-container, so it needs read access to the same host path `livesync-cli` writes to. This means editing
-n8n's own `compose.yml` (wherever your n8n stack lives, not this repo) to add a bind mount:
+**Step 1 — mount the vault mirror into n8n itself, and clear two default security restrictions.** The
+Local File Trigger node runs inside n8n's own container, so it needs read access to the same host path
+`livesync-cli` writes to. This means editing n8n's own `compose.yml` (wherever your n8n stack lives, not
+this repo) to add a bind mount **and** two environment variables — recent n8n versions exclude
+filesystem-touching nodes by default (sensible on an internet-facing instance), and this workflow
+genuinely needs two of them:
 ```yaml
+    environment:
+      # ...your existing vars...
+      # Default excludes n8n-nodes-base.localFileTrigger (and executeCommand) entirely. Re-enable just
+      # the trigger; leave executeCommand blocked.
+      NODES_EXCLUDE: '["n8n-nodes-base.executeCommand"]'
+      # Default restricts file-system nodes (Read/Write Files from Disk) to ~/.n8n-files only. Add the
+      # vault mirror mount path.
+      N8N_RESTRICT_FILE_ACCESS_TO: '/vault-mirror;~/.n8n-files'
     volumes:
       - /data/vault-mirror/vault:/vault-mirror:ro   # adjust to your VAULT_MIRROR_PATH
 ```
 then `docker compose up -d n8n` to apply it. This briefly restarts n8n (confirmed: a few seconds of
-downtime, `healthz` recovers on its own once the container comes back up).
+downtime, `healthz` recovers on its own once the container comes back up). **Both env vars are required
+— missing either one makes the trigger fail silently** (workflow shows "Published"/"Active" in the UI
+with no error, but the trigger either never registers or throws `Access to the file is not allowed.` on
+every run) rather than erroring at import or publish time. See `docs/TROUBLESHOOTING.md` for exactly
+what each failure mode looks like in the logs.
 
 **Step 2 — import the workflow:**
 ```bash
@@ -217,10 +232,25 @@ click that node, and attach (or create) an OpenRouter credential (just an API ke
 `google/gemini-3.1-pro-preview`, or any other slug from [openrouter.ai/models](https://openrouter.ai/models)
 — no node graph changes needed to switch models later, just edit that field.
 
-**Step 4 — activate the workflow** in the n8n editor once the credential is attached.
+**Step 4 — activate the workflow** in the n8n editor once the credential is attached. n8n only builds
+its list of which triggers to actually start listening for **once, at process boot** — publishing or
+activating a workflow while n8n is already running updates the database immediately, but the running
+process won't start watching until it restarts (confirmed: `n8n publish:workflow` says this explicitly;
+it turned out to be true of UI-based activation too). **Restart n8n once after activating** if this is
+the first workflow you've activated since it last started.
 
 ## Phase 4 — End-to-end test
 
-_Pending — needs Phase 3's manual steps done first. Once activated, drop a `.md` file into `Index
-Inbox/` in the vault (or record a real note on the ring) and check the `Research/` folder for the
-resulting note, and n8n's Executions list for the run._
+**✅ Validated (2026-08-25)**, agent half of the pipeline: dropped a real note into `Index Inbox/`
+(`poolside/laguna-s-2.1:free` via OpenRouter) — the trigger fired, the agent read the note, searched the
+web, and wrote a real, well-structured note into `Research/` with correct frontmatter (`tags`, `source`,
+`created`), and appended a backlink to the original note. Full round trip through the n8n workflow
+confirmed working with a real free-tier model.
+
+**⚠️ Not yet confirmed**: whether `livesync-cli` actually picks up and syncs these new/edited files back
+through MinIO to the phone/desktop. In this same test, `livesync-cli`'s logs showed no reaction at all
+to the new files (no journal push, nothing) even ~1 minute after they appeared on disk, despite
+`daemon` mode supposedly watching that same directory continuously (see `spike-livesync-s3`'s original
+validation, which *did* see near-instant reactions). Needs investigation — possibly specific to files
+being written by a different container's process than the one `livesync-cli` was originally validated
+against, but not yet root-caused. Track as a follow-up before calling this fully end-to-end.

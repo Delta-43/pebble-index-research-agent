@@ -61,6 +61,18 @@ services need write access to the same volume.
 container) — `mc alias set ... http://...` fails with *"Client sent an HTTP request to an HTTPS
 server"*; use `https://` (`--insecure` if the cert isn't trusted by the calling client) instead.
 
+**⚠️ Open issue, not yet root-caused (found during `n8n-workflow-agent` e2e testing, 2026-08-25):**
+`livesync-cli daemon` showed **zero reaction** — no log lines at all — to new/edited files appearing in
+the vault mirror during a real end-to-end test (a new note in `Index Inbox/`, a new note in `Research/`,
+and an edit to the original note, all written by other containers sharing the same host bind mount),
+even ~1 minute after they landed on disk. This contradicts `spike-livesync-s3`'s original validation,
+which saw `daemon` mode react within seconds. Confirmed the container itself was healthy and had been
+running continuously (`Initialized, NOW TRACKING!` in its logs) the whole time, not crashed or
+restarted. Not yet determined whether this is specific to writes coming from a different container's
+process than the one originally tested against, a regression, or something else — needs a focused
+follow-up before the sync-back-to-phone half of the pipeline can be called validated. The
+research-agent half (trigger → agent → tools → write) is unaffected and fully confirmed working.
+
 ## MCP stdio→SSE bridging (`spike-mcp-bridge`)
 
 **`npx -y mcp-proxy` silently resolves to the wrong package.** There are two unrelated projects called
@@ -196,6 +208,37 @@ workflow. The two nodes' `model` parameter isn't a drop-in match: OpenAI's is a 
 (`{"__rl": true, "mode": "list", "value": "gpt-5-mini", "cachedResultName": "gpt-5-mini"}`), OpenRouter's
 is just `"openai/gpt-5-mini"` (a plain string). Re-used the same credential-omitted pattern (left unset
 for the user to attach post-import) and confirmed the swap re-imports and round-trips cleanly.
+
+**A workflow can show "Published"/"Active" in the n8n UI with its trigger completely non-functional,
+with no error surfaced anywhere in the UI.** Two separate default security restrictions in recent n8n
+versions silently break the Local File Trigger node used here — neither shows up as an import error, a
+publish error, or a UI warning; both only appear in the container's own logs:
+
+1. **`NODES_EXCLUDE` defaults to `["n8n-nodes-base.executeCommand", "n8n-nodes-base.localFileTrigger"]`**
+   (from `@n8n/config`'s `NodesConfig`). With this default, the node is simply never registered — at
+   boot, the log shows `Issue on initial workflow activation try of "<name>" (ID: ...) (startup)`
+   immediately followed by `Unrecognized node type: n8n-nodes-base.localFileTrigger`. The workflow still
+   shows "Active" in the UI; the trigger just silently never starts. Fix: set `NODES_EXCLUDE` explicitly
+   to override the default, e.g. `'["n8n-nodes-base.executeCommand"]'` to re-enable just
+   `localFileTrigger` while keeping the more dangerous `executeCommand` blocked.
+2. **`N8N_RESTRICT_FILE_ACCESS_TO` defaults to `~/.n8n-files`** (from `@n8n/config`'s `SecurityConfig`,
+   *not* empty as the "only applies if you set it" framing in some docs implies). Once the trigger
+   itself is fixed, the downstream **Read/Write Files from Disk** node then fails on every run with
+   `Access to the file is not allowed.` (a `NodeOperationError`, visible in that node's execution error,
+   not in the container logs) for any path outside that default. Fix: set `N8N_RESTRICT_FILE_ACCESS_TO`
+   to a semicolon-separated list including the vault mirror path, e.g.
+   `/vault-mirror;~/.n8n-files` (keeping the default alongside the addition, since other n8n features may
+   rely on it).
+
+Both are found by reading `@n8n/config`'s `nodes.config.js`/`security.config.js` source directly inside
+the container (`find / -path '*@n8n/config*' -iname '*.js'`) — grepping the container's own logs for the
+error text (`Unrecognized node type`, `Access to the file is not allowed`) leads to the throwing code
+(`n8n-core`'s `load-nodes-and-credentials.js`, `file-system-helper-functions.js`), which leads to the
+config class whose default is the actual root cause. **Both changes require restarting n8n to take
+effect** — publishing/activating a workflow updates the database immediately, but the already-running
+process only builds its list of "which triggers to actually start" once, at boot (confirmed: this is
+literally what `n8n publish:workflow`'s own CLI output warns — `Note: Changes will not take effect if
+n8n is running. Please restart n8n` — and it turned out to be true of UI-based publish/activate too).
 
 **The same host directory is mounted at *different* container paths in different services** —
 `/vault-mirror` in `n8n` (this project's addition to n8n's own `compose.yml`, read-only) vs. `/vault` in
