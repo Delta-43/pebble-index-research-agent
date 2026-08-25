@@ -62,8 +62,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
       working end-to-end on the real n8n instance, using OpenRouter (any underlying model, one API key)
 - [x] End-to-end test — agent half: a real dropped note triggered a real web search and produced a
       real, correctly-tagged research note with a backlink, using a free OpenRouter model
-- [ ] End-to-end test — sync-back half: `livesync-cli` isn't yet confirmed to pick up and sync the
-      new/edited files back to the phone (see `docs/TROUBLESHOOTING.md`)
+- [x] End-to-end test — sync-back half: confirmed `livesync-cli` picks up and pushes new/edited files
+      to MinIO correctly, and that this works with **zero Obsidian instances live on any device** (see
+      `docs/TROUBLESHOOTING.md`)
 - [ ] Test with a real ring recording (so far tested with a manually-dropped note)
 - [ ] Full documentation pass
 

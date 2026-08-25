@@ -247,10 +247,15 @@ web, and wrote a real, well-structured note into `Research/` with correct frontm
 `created`), and appended a backlink to the original note. Full round trip through the n8n workflow
 confirmed working with a real free-tier model.
 
-**⚠️ Not yet confirmed**: whether `livesync-cli` actually picks up and syncs these new/edited files back
-through MinIO to the phone/desktop. In this same test, `livesync-cli`'s logs showed no reaction at all
-to the new files (no journal push, nothing) even ~1 minute after they appeared on disk, despite
-`daemon` mode supposedly watching that same directory continuously (see `spike-livesync-s3`'s original
-validation, which *did* see near-instant reactions). Needs investigation — possibly specific to files
-being written by a different container's process than the one `livesync-cli` was originally validated
-against, but not yet root-caused. Track as a follow-up before calling this fully end-to-end.
+**✅ Validated**, sync-back half: confirmed `livesync-cli` picks up and pushes these new/edited files
+correctly. The daemon's own console logs stay silent on routine successful syncs (`showVerboseLog:
+false`), which briefly looked like a real problem — checking the actual MinIO bucket directly showed a
+fresh journal chunk for every change, including one that landed within 2 seconds of a file write. See
+`docs/TROUBLESHOOTING.md` for how to verify this directly against the bucket rather than trusting
+`docker logs`.
+
+**✅ Also confirmed**: this works with **zero Obsidian instances live on any device**. Neither the phone
+nor desktop had connected in hours during this test, yet every push from the server-side `livesync-cli`
+landed correctly — Journal Sync is a durable, asynchronous, per-device-cursor log over object storage,
+not live peer-to-peer replication, so nothing requires two devices to be online simultaneously. See
+`docs/TROUBLESHOOTING.md` for the `master-vault_00000000-milestone.json` structure that shows this.

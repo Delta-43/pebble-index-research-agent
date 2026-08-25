@@ -61,17 +61,34 @@ services need write access to the same volume.
 container) — `mc alias set ... http://...` fails with *"Client sent an HTTP request to an HTTPS
 server"*; use `https://` (`--insecure` if the cert isn't trusted by the calling client) instead.
 
-**⚠️ Open issue, not yet root-caused (found during `n8n-workflow-agent` e2e testing, 2026-08-25):**
-`livesync-cli daemon` showed **zero reaction** — no log lines at all — to new/edited files appearing in
-the vault mirror during a real end-to-end test (a new note in `Index Inbox/`, a new note in `Research/`,
-and an edit to the original note, all written by other containers sharing the same host bind mount),
-even ~1 minute after they landed on disk. This contradicts `spike-livesync-s3`'s original validation,
-which saw `daemon` mode react within seconds. Confirmed the container itself was healthy and had been
-running continuously (`Initialized, NOW TRACKING!` in its logs) the whole time, not crashed or
-restarted. Not yet determined whether this is specific to writes coming from a different container's
-process than the one originally tested against, a regression, or something else — needs a focused
-follow-up before the sync-back-to-phone half of the pipeline can be called validated. The
-research-agent half (trigger → agent → tools → write) is unaffected and fully confirmed working.
+**`livesync-cli daemon`'s console logs are silent on routine successful syncs — don't use `docker logs`
+as your evidence of whether sync is working.** During `n8n-workflow-agent` e2e testing (2026-08-25), the
+daemon appeared completely unresponsive to new/edited files (no log lines at all, even ~1 minute after
+files landed on disk), which looked like a real regression from `spike-livesync-s3`'s original "reacts
+within seconds" finding. **It wasn't** — `showVerboseLog: false` in `livesync-settings.json` means only
+the very first startup/mirror-scan cycle logs per-file detail; every subsequent successful push is
+silent on stdout. Checking the actual MinIO bucket directly (not the container logs) proved it had been
+working correctly the entire time:
+```bash
+mc alias set pebbleagent "$LIVESYNC_S3_ENDPOINT" "$LIVESYNC_S3_ACCESS_KEY" "$LIVESYNC_S3_SECRET_KEY"
+mc ls "pebbleagent/$LIVESYNC_S3_BUCKET/"   # look for master-vault<timestamp>-docs.jsonl.gz, sorted by time
+```
+A controlled follow-up test (`livesync-cli` left running normally, one new file dropped) confirmed a
+fresh journal chunk appears in the bucket **within 2 seconds** — matching the original spike's finding
+exactly. **When checking whether `livesync-cli` is working, verify against the MinIO bucket (or the
+`master-vault_00000000-milestone.json` doc's per-node `progress`/`last_connected` fields), not the
+daemon's stdout.**
+
+**Confirmed: sync works with zero Obsidian instances live on any device**, which matters because it's
+easy to assume (wrongly) that a "sync" tool needs two live endpoints talking to each other. Journal Sync
+is a durable, asynchronous, object-storage-mediated log, not live peer-to-peer replication — inspecting
+`master-vault_00000000-milestone.json`'s `node_info` map shows each device (phone, desktop, this
+project's `livesync-cli`) tracked independently with its own `progress` cursor (the last journal chunk
+it has processed) and `last_connected` timestamp. During this entire test, neither the phone nor desktop
+had connected in hours — yet `livesync-cli`'s pushes landed in the bucket perfectly. Whichever device
+opens next simply compares its own cursor against the latest chunks and pulls whatever it missed.
+Nothing in the protocol requires the server and a phone/desktop Obsidian instance to be online at the
+same time.
 
 ## MCP stdio→SSE bridging (`spike-mcp-bridge`)
 

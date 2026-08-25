@@ -15,22 +15,24 @@ architecture from scratch, it's already been researched and decided (see "Key de
 
 ## Current state (as of this writing)
 
-**The AI-agent half of the pipeline is fully working and e2e-tested on the real server**
-(`home_server`, hostname `delta-server`): the full `docker/docker-compose.yml` stack (`livesync-cli`,
-`searxng`, `mcp-obsidian`, `mcp-searxng`) is deployed, and the n8n workflow
-(`n8n/workflows/pebble-index-research-agent.json`, model backend switched to **OpenRouter** per user
-preference) is imported, activated, and confirmed working end-to-end — a real dropped note triggered a
-real web search and produced a real, correctly-tagged research note with a backlink. Getting there
-required overriding two of n8n's own default security restrictions (`NODES_EXCLUDE`,
-`N8N_RESTRICT_FILE_ACCESS_TO`) on n8n's own shared `compose.yml` — see `docs/TROUBLESHOOTING.md` for
-exactly what those failures looked like (neither surfaces as a UI error). **Not yet working: sync-back
-to the phone** — `livesync-cli` showed no reaction at all to the new/edited files during the e2e test,
-an open, not-yet-root-caused issue (see `docs/TROUBLESHOOTING.md`). Sessions now run directly on
-`home_server` (no `ssh home_server` hop needed) — see `docs/ARCHITECTURE.md`/`docs/SETUP.md`/
-`docs/TROUBLESHOOTING.md` for the real findings behind every service. When building/editing n8n
-workflow JSON, don't guess node schemas — read them from `.../dist/node-definitions/nodes/**/v<N>.ts`
-inside the running `n8n` container (see `docs/TROUBLESHOOTING.md`), and don't assume a published/active
-workflow's trigger is actually running — n8n only builds its active-trigger list once at boot, so a
+**The full pipeline is working and e2e-tested on the real server** (`home_server`, hostname
+`delta-server`): the full `docker/docker-compose.yml` stack (`livesync-cli`, `searxng`, `mcp-obsidian`,
+`mcp-searxng`) is deployed, and the n8n workflow (`n8n/workflows/pebble-index-research-agent.json`,
+model backend switched to **OpenRouter** per user preference) is imported, activated, and confirmed
+working end-to-end — a real dropped note triggered a real web search and produced a real,
+correctly-tagged research note with a backlink, and `livesync-cli` correctly pushed all of it to MinIO
+(confirmed by checking the bucket directly, not the daemon's — misleadingly silent — console logs; see
+`docs/TROUBLESHOOTING.md`). Also confirmed: sync works with **zero Obsidian instances live on any
+device** — Journal Sync is an async, per-device-cursor log over object storage, not live replication.
+Getting the agent half working required overriding two of n8n's own default security restrictions
+(`NODES_EXCLUDE`, `N8N_RESTRICT_FILE_ACCESS_TO`) on n8n's own shared `compose.yml` — see
+`docs/TROUBLESHOOTING.md` for exactly what those failures looked like (neither surfaces as a UI error).
+Sessions now run directly on `home_server` (no `ssh home_server` hop needed) — see
+`docs/ARCHITECTURE.md`/`docs/SETUP.md`/`docs/TROUBLESHOOTING.md` for the real findings behind every
+service. When building/editing n8n workflow JSON, don't guess node schemas — read them from
+`.../dist/node-definitions/nodes/**/v<N>.ts` inside the running `n8n` container (see
+`docs/TROUBLESHOOTING.md`), and don't assume a published/active workflow's trigger is actually running
+— n8n only builds its active-trigger list once at boot, so a
 restart is needed after every publish/activate while n8n is already running.
 
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
@@ -44,10 +46,10 @@ for a synced task list if one has been added to this repo). As of this writing, 
 5. `mcp-obsidian-service`, `mcp-searxng-service` (parallel) — ✅ both done, deployed as real standing
    compose services (not just spike scratch containers) and re-validated end-to-end
 6. `n8n-workflow-trigger`, then `n8n-workflow-agent` — ✅ both done, built, imported, activated
-7. `e2e-testing` — ✅ agent half done (real note → real search → real research note + backlink,
-   confirmed on the live server); ⚠️ sync-back half (`livesync-cli` → MinIO → phone) still open, see
-   `docs/TROUBLESHOOTING.md` — **next up**
-8. `docs-repo` (fill in the still-pending doc sections)
+7. `e2e-testing` — ✅ done: agent half (real note → real search → real research note + backlink) and
+   sync-back half (`livesync-cli` → MinIO, confirmed via the bucket, working with zero live Obsidian
+   devices) both confirmed on the live server, see `docs/TROUBLESHOOTING.md`
+8. `docs-repo` (fill in the still-pending doc sections) — **next up**
 9. `publish-github` (repo already exists and is public: `Delta-43/pebble-index-research-agent`; this
    step is about final polish/release, not initial creation)
 
