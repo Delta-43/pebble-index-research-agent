@@ -6,9 +6,9 @@
 ## Prerequisites checklist
 
 - [ ] Core Devices Pebble Index 01 ring, paired with the [Pebble mobile app](https://github.com/coredevices/mobileapp)
-- [ ] Obsidian vault with the [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) plugin
+- [x] Obsidian vault with the [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) plugin
       installed and syncing through your own MinIO (S3-compatible) bucket
-- [ ] A headless Ubuntu server reachable via SSH, with Docker Engine + Compose plugin installed
+- [x] A headless Ubuntu server reachable via SSH, with Docker Engine + Compose plugin installed
       (see [Phase 0](#phase-0--docker-engine-on-a-headless-server))
 - [ ] An existing n8n instance reachable from that server
 - [ ] A cloud LLM API key (OpenAI, Anthropic, or Gemini)
@@ -83,12 +83,10 @@ Instead:
 - `livesync-cli` needs no explicit network — it only needs volume access and outbound HTTPS egress to
   MinIO, both of which work on Docker's default bridge.
 
-Remaining for later todos: `vault-mirror-service` still needs to automate the one-time
-`init-settings`/`setup`/`unlock-remote` bootstrap (currently manual, see Phase 1); `searxng-service`
-still needs to decide reuse-vs-isolate against the already-running `n8n-searxng-1` (see
-`docs/ARCHITECTURE.md`).
+Remaining for later todos: `searxng-service` still needs to decide reuse-vs-isolate against the
+already-running `n8n-searxng-1` (see `docs/ARCHITECTURE.md`).
 
-
+## Phase 1 — Vault mirror (`livesync-cli`)
 
 **Validated** against a real MinIO/S3 remote using Journal Sync (see `docs/ARCHITECTURE.md` and
 `docs/TROUBLESHOOTING.md` for full details/gotchas). Summary of the working bootstrap sequence:
@@ -126,6 +124,38 @@ Remaining for `vault-mirror-service`: wire the above into the standing compose s
 `settings.json` in the `livesync_db` volume, run steps 2-4 as a one-time bootstrap rather than on every
 container start), and resolve the root-owned-files permission question noted in
 `docs/TROUBLESHOOTING.md`.
+
+### Deploying as a persistent service (`vault-mirror-service`)
+
+**Validated** (`vault-mirror-service`, 2026-08-25) on `home_server`. The one-time bootstrap above
+(steps 1-4) only needs to happen once per device — this project's persistent deployment reuses the
+`settings.json` it already produced, rather than re-running `setup`/`unlock-remote`:
+
+```bash
+# 1. Create the persistent host directories (bind-mounted, not anonymous Docker volumes, so
+#    mcp-obsidian and later n8n can mount the exact same path)
+mkdir -p /data/vault-mirror/data /data/vault-mirror/vault/.obsidian
+cp <bootstrapped-settings.json> /data/vault-mirror/data/livesync-settings.json
+
+# 2. Point docker/.env at them (see docker/.env.example)
+#   VAULT_MIRROR_DATA_PATH=/data/vault-mirror/data
+#   VAULT_MIRROR_PATH=/data/vault-mirror/vault
+
+# 3. Start it
+cd /data/projects/pebble-index-research-agent/repo/docker
+docker compose up -d livesync-cli
+docker compose logs livesync-cli   # confirm "[Daemon] LiveSync active"
+```
+
+The `.obsidian/` directory must exist (empty is fine) before first start — Journal Sync doesn't
+replicate it, and `obsidian-mcp` (see Phase 2) refuses a vault without one.
+
+**Confirmed real bidirectional sync** on the deployed service: a file created directly in the vault
+bind mount was picked up by the `chokidar` watcher and pushed to MinIO within seconds; deleting it
+locally correctly propagated as a remote deletion on the next scan. See `docs/ARCHITECTURE.md` and
+`docs/TROUBLESHOOTING.md` for the exact log lines and the root-ownership permission gotcha (subdirectories
+the container creates are root-owned; the vault's top-level directory remains writable by whichever
+host user created it).
 
 ## Phase 2 — MCP servers
 

@@ -56,7 +56,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
 
 - [x] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
 - [x] Validate stdio→SSE bridging for both MCP servers
-- [ ] Docker Compose stack for the server
+- [x] Docker base + networks + secrets bootstrap on the server
+- [x] Deploy `livesync-cli` as a persistent, bidirectional vault-mirror service
+- [ ] Deploy SearXNG + both MCP bridges as services
 - [ ] n8n workflow (trigger → agent → tools → save note)
 - [ ] End-to-end test with a real ring recording
 - [ ] Full documentation pass

@@ -61,6 +61,37 @@ services need write access to the same volume.
 container) — `mc alias set ... http://...` fails with *"Client sent an HTTP request to an HTTPS
 server"*; use `https://` (`--insecure` if the cert isn't trusted by the calling client) instead.
 
+## Deploying `livesync-cli` as a persistent service (`vault-mirror-service`)
+
+**Use host bind mounts, not anonymous Docker volumes.** `mcp-obsidian` (and later n8n's own compose
+stack) needs to mount the *identical* vault directory by path. An anonymous named volume works fine for
+a single service, but sharing it across separate `docker-compose.yml` files/projects requires extra
+`external: true`/`name:` wiring. A plain host path (`VAULT_MIRROR_PATH=/data/vault-mirror/vault` in
+`docker/.env`) is simpler to reason about and document.
+
+**A brand-new persistent directory does not need any of the spike's local db state carried over** —
+seed it with only the already-bootstrapped `settings.json` (and an empty `.obsidian/`), start `daemon`,
+and the initial "mirror scan" pulls the full remote history down fresh. Confirmed via
+`[Daemon] Total files to synchronise: N` / `Synchronisation completed: ...` on first boot.
+
+**Root-owned subdirectories block host-side writes into them, but not into the vault root.** The
+container runs as root, so any subdirectory it *materializes itself* (e.g. `Index Inbox/`, pulled down
+from the remote) ends up `root:root` mode `755` — a non-root host user gets `Permission denied` trying
+to create a file inside it directly (`echo test > ".../Index Inbox/x.md"` fails). Writing directly into
+the **top-level vault directory** (owned by whoever ran the initial `mkdir -p`) works fine, since that
+directory itself wasn't touched by the root-run container. This only matters for host-side manual
+testing/debugging — the production write path is always through a container (`livesync-cli` itself, or
+later `mcp-obsidian`/n8n), which runs as root anyway and is unaffected.
+
+**Confirming the chokidar file-watcher is actually running requires `--verbose` (or patience).** Plain
+`daemon` mode logs almost nothing for the local→remote direction under normal log levels — a local file
+create/delete can complete successfully with zero new log lines at the default verbosity, which looks
+identical to "it's not working." Re-run with `--verbose` appended to the daemon command (or
+`docker logs -f` on a manually-started verbose instance) to see confirmation lines like
+`[Info] STORAGE -> DB (plain) <path>` (upload) and `[Daemon] NEWER_WINS: Treating missing local file as
+deletion (<path>)` → `[Daemon] DELETE DATABASE: <path>` (delete propagation). Don't conclude the watcher
+is broken from silence alone at default verbosity.
+
 ## MCP stdio→SSE bridging (`spike-mcp-bridge`)
 
 **`npx -y mcp-proxy` silently resolves to the wrong package.** There are two unrelated projects called
