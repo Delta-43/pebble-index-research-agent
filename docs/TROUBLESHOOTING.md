@@ -189,6 +189,14 @@ matched filesystem event, nothing else.) The workflow reads the note's content i
 **Extract from File** (`operation: "text"`) immediately after the trigger, rather than relying on
 `obsidian_read_note` for the very note that triggered the run.
 
+**OpenRouter Chat Model's `model` parameter is a plain string, unlike OpenAI's resource-locator
+`{__rl, mode, value}` shape.** Swapped `lmChatOpenAi` for `@n8n/n8n-nodes-langchain.lmChatOpenRouter`
+(per user preference — one API key, free choice of any underlying model) partway through building this
+workflow. The two nodes' `model` parameter isn't a drop-in match: OpenAI's is a resource-locator object
+(`{"__rl": true, "mode": "list", "value": "gpt-5-mini", "cachedResultName": "gpt-5-mini"}`), OpenRouter's
+is just `"openai/gpt-5-mini"` (a plain string). Re-used the same credential-omitted pattern (left unset
+for the user to attach post-import) and confirmed the swap re-imports and round-trips cleanly.
+
 **The same host directory is mounted at *different* container paths in different services** —
 `/vault-mirror` in `n8n` (this project's addition to n8n's own `compose.yml`, read-only) vs. `/vault` in
 `mcp-obsidian` (this project's own `docker-compose.yml`). A **Set** node (`Prepare Agent Input`) strips

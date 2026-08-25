@@ -74,8 +74,11 @@ for a synced task list if one has been added to this repo). As of this writing, 
 - **stdio→HTTP bridge**: both MCP servers above are stdio-based; `sparfenyuk/mcp-proxy` wraps each as
   an SSE endpoint for n8n's built-in **MCP Client Tool** node. This keeps every tool as an independent
   container reachable over the network, rather than bundling node/python tooling into the n8n image.
-- **LLM**: a cloud API (OpenAI/Anthropic/Gemini) configured as an n8n credential — not a local/Ollama
-  model — per explicit user preference.
+- **LLM**: [OpenRouter](https://openrouter.ai/) (`@n8n/n8n-nodes-langchain.lmChatOpenRouter`), a single
+  API key with free choice of underlying model — not a local/Ollama model, and not a single locked-in
+  provider — per explicit user preference for customizability. The node's `model` parameter is a plain
+  string (e.g. `openai/gpt-5-mini`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`), so
+  swapping models never requires touching the node graph — see `docs/SETUP.md` Phase 3.
 - **Trigger**: n8n's built-in **Local File Trigger** node, watching the ring-notes subfolder inside the
   mirrored vault directory (mounted into the n8n container).
 

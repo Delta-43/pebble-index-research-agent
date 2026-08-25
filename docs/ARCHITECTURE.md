@@ -87,7 +87,8 @@ n8n's **Local File Trigger** node watches the ring-transcript subfolder inside t
 
 ## Agent & tools
 
-The n8n workflow's **AI Agent** node (backed by a cloud LLM — OpenAI/Anthropic/Gemini) is given two MCP
+The n8n workflow's **AI Agent** node (backed by [OpenRouter](https://openrouter.ai/) — one API key, any
+underlying model, chosen per explicit user preference over a locked-in single provider) is given two MCP
 tool servers via n8n's **MCP Client Tool** node:
 
 1. **`obsidian-mcp`** (`StevenStavrakis/obsidian-mcp`) — operates directly on the mirrored vault

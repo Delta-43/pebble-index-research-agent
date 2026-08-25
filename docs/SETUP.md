@@ -11,7 +11,8 @@
 - [ ] A headless Ubuntu server reachable via SSH, with Docker Engine + Compose plugin installed
       (see [Phase 0](#phase-0--docker-engine-on-a-headless-server))
 - [ ] An existing n8n instance reachable from that server
-- [ ] A cloud LLM API key (OpenAI, Anthropic, or Gemini)
+- [ ] An [OpenRouter](https://openrouter.ai/) API key (gives free choice of underlying model with a
+      single key — see Phase 3)
 
 ## Phase 0 — Docker Engine on a headless server
 
@@ -208,11 +209,13 @@ docker cp n8n/workflows/pebble-index-research-agent.json n8n:/tmp/wf.json
 docker exec n8n n8n import:workflow --input=/tmp/wf.json
 ```
 
-**Step 3 — add an LLM credential.** The workflow ships with its `OpenAI Chat Model` node's credential
-intentionally unset (see `docs/ARCHITECTURE.md`) — open the workflow in the n8n editor, click that node,
-and attach (or create) an OpenAI credential. Using Anthropic or Gemini instead just means swapping that
-one node for the equivalent Chat Model node and reconnecting it to the Agent's `ai_languageModel` input
-— everything else (trigger, tools, prompt) stays the same.
+**Step 3 — add an OpenRouter credential.** The workflow ships with its `OpenRouter Chat Model` node's
+credential intentionally unset (see `docs/ARCHITECTURE.md`) — open the workflow in the n8n editor,
+click that node, and attach (or create) an OpenRouter credential (just an API key from
+[openrouter.ai](https://openrouter.ai/settings/keys)). To choose the model, edit that same node's
+`Model` field — it's a plain string, e.g. `openai/gpt-5-mini`, `anthropic/claude-sonnet-4.6`,
+`google/gemini-3.1-pro-preview`, or any other slug from [openrouter.ai/models](https://openrouter.ai/models)
+— no node graph changes needed to switch models later, just edit that field.
 
 **Step 4 — activate the workflow** in the n8n editor once the credential is attached.
 

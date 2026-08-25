@@ -18,8 +18,8 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
                                             │
      n8n Local File Trigger watches the ring-notes subfolder
                                             │
-     n8n AI Agent (cloud LLM) ──uses──► MCP: obsidian-mcp   (read / write / tag notes)
-                                   └──uses──► MCP: mcp-searxng (web research via self-hosted SearXNG)
+     n8n AI Agent (OpenRouter, any model) ──uses──► MCP: obsidian-mcp   (read / write / tag notes)
+                                       └──uses──► MCP: mcp-searxng (web research via self-hosted SearXNG)
                                             │
      New research note (title + tags) written back into the vault mirror
                                             │
@@ -59,7 +59,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
 - [x] Docker Compose stack for the server (`livesync-cli`, dedicated `searxng`, `mcp-obsidian`,
       `mcp-searxng` — deployed and round-tripped real tool calls/searches on the real server)
 - [x] n8n workflow (trigger → agent → tools → save note) — built, imported, and round-tripped on the
-      real n8n instance; not yet activated (needs an LLM credential added manually, see `docs/SETUP.md`)
+      real n8n instance, using an OpenRouter Chat Model node (any underlying model, one API key); not
+      yet activated (needs an OpenRouter credential added manually, see `docs/SETUP.md`)
 - [ ] End-to-end test with a real ring recording
 - [ ] Full documentation pass
 
@@ -70,7 +71,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
   synced through your own MinIO (or other S3-compatible / CouchDB) instance
 - A headless Linux server with Docker Engine + the Compose plugin (no Docker Desktop)
 - An existing n8n instance (self-hosted) with access to that server
-- An API key for a cloud LLM (OpenAI / Anthropic / Gemini)
+- An [OpenRouter](https://openrouter.ai/) API key — one key, free choice of underlying model
 
 ## License
 
