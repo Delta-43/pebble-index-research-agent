@@ -4,8 +4,16 @@
 # your existing compose project with this file via `docker compose -f existing.yml -f docker-compose.yml`)
 # once their exact service names/networks are known.
 #
-# STATUS: skeleton only — service configs below are placeholders pending the spikes described in
-# docs/ARCHITECTURE.md. Do not deploy as-is.
+# STATUS: foundation validated (spike-livesync-s3, spike-mcp-bridge, server-base-setup) — networks and
+# secrets wiring below are real and tested; per-service bootstrap automation (vault-mirror-service,
+# searxng-service, etc.) is still pending. Do not deploy as-is without completing those.
+#
+# Networking (validated server-base-setup, 2026-08-25): `n8n_n8n_internal` is n8n's own existing Docker
+# network (external to this project) — mcp-obsidian and mcp-searxng join it so n8n's MCP Client Tool
+# node can reach their SSE endpoints (this exact reachability was tested in spike-mcp-bridge from the
+# real running n8n container). `pebble-agent-internal` is a new network dedicated to this project, used
+# to keep `searxng` reachable only by `mcp-searxng` (not directly by n8n or the host) — `mcp-searxng`
+# bridges both networks.
 
 services:
   # Keeps a plain-Markdown mirror of the Obsidian vault on disk, synced against the same MinIO/S3
@@ -40,6 +48,8 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+    networks:
+      - pebble-agent-internal
     volumes:
       - searxng_config:/etc/searxng
     # TODO: enable JSON format in settings.yml (`formats: [html, json]`) so mcp-searxng can query it.
@@ -54,6 +64,8 @@ services:
     build: ./mcp-obsidian
     container_name: mcp-obsidian
     restart: unless-stopped
+    networks:
+      - n8n_n8n_internal
     volumes:
       - vault_mirror:/vault
     ports:
@@ -68,12 +80,24 @@ services:
     build: ./mcp-searxng
     container_name: mcp-searxng
     restart: unless-stopped
+    env_file: .env
     environment:
-      SEARXNG_URL: http://searxng:8080
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+    networks:
+      - n8n_n8n_internal
+      - pebble-agent-internal
     depends_on:
       - searxng
     ports:
       - "8802:8802"
+
+networks:
+  # n8n's own existing network — external because this project doesn't own/manage n8n's compose stack.
+  n8n_n8n_internal:
+    external: true
+  # Dedicated to this project: keeps `searxng` reachable only by `mcp-searxng`, not by n8n or the host.
+  pebble-agent-internal:
+    driver: bridge
 
 volumes:
   livesync_db:

@@ -44,7 +44,51 @@ sudo usermod -aG docker $USER && newgrp docker
 docker run --rm hello-world
 ```
 
-## Phase 1 — Vault mirror (`livesync-cli`)
+## Phase 0.5 — Project directory, shared network, and secrets (`server-base-setup`)
+
+**Validated** (`server-base-setup`, 2026-08-25) against `home_server`. Docker Engine 29.7.2 +
+Compose plugin v5.5.0 confirmed already installed (matches Phase 0). Steps:
+
+```bash
+# 1. Clone this repo onto the server as the deployment checkout (re-`git pull` here on future updates)
+mkdir -p /data/projects/pebble-index-research-agent
+git clone https://github.com/Delta-43/pebble-index-research-agent.git \
+  /data/projects/pebble-index-research-agent/repo
+
+# 2. Create the project's own internal network (isolates searxng — see below)
+docker network create pebble-agent-internal
+
+# 3. Populate the real .env (gitignored, lives only on the server) from docker/.env.example
+cp /data/projects/pebble-index-research-agent/repo/docker/.env.example \
+   /data/projects/pebble-index-research-agent/repo/docker/.env
+chmod 600 /data/projects/pebble-index-research-agent/repo/docker/.env
+# ...then fill in the real MinIO endpoint/bucket/accessKey/secretKey (available in the already-
+# bootstrapped livesync-settings.json from Phase 1 — see docs/ARCHITECTURE.md) and SearXNG config.
+# LLM_API_KEY is intentionally left blank here: it's configured directly as an n8n credential
+# (n8n-workflow-agent), no container in this compose stack needs it. LIVESYNC_PASSPHRASE is also left
+# blank: the vault's E2EE passphrase is never stored in plaintext (`encryptedPassphrase` stays
+# encrypted at rest), and vault-mirror-service reuses the already-bootstrapped settings.json rather
+# than re-deriving credentials from an env var.
+```
+
+**Networking decision:** `docker-compose.yml` does **not** create one flat network for everything.
+Instead:
+- `n8n_n8n_internal` — n8n's own *existing* Docker network, declared `external: true` (this project
+  doesn't own n8n's compose stack). `mcp-obsidian` and `mcp-searxng` join it so n8n's MCP Client Tool
+  node can reach their SSE endpoints — this exact reachability path was already validated end-to-end in
+  `spike-mcp-bridge` from the real, running `n8n` container.
+- `pebble-agent-internal` — a new network dedicated to this project. `searxng` only joins this one, so
+  it stays reachable exclusively by `mcp-searxng` (not by n8n or the host directly), matching the
+  original "network-isolated" design goal for `searxng-service`. `mcp-searxng` bridges both networks.
+- `livesync-cli` needs no explicit network — it only needs volume access and outbound HTTPS egress to
+  MinIO, both of which work on Docker's default bridge.
+
+Remaining for later todos: `vault-mirror-service` still needs to automate the one-time
+`init-settings`/`setup`/`unlock-remote` bootstrap (currently manual, see Phase 1); `searxng-service`
+still needs to decide reuse-vs-isolate against the already-running `n8n-searxng-1` (see
+`docs/ARCHITECTURE.md`).
+
+
 
 **Validated** against a real MinIO/S3 remote using Journal Sync (see `docs/ARCHITECTURE.md` and
 `docs/TROUBLESHOOTING.md` for full details/gotchas). Summary of the working bootstrap sequence:
