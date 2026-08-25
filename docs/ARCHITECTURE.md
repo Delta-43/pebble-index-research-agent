@@ -190,18 +190,28 @@ live round-trip tool calls (not just a handshake check). Key findings:
 |---|---|---|
 | `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
+| `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
 
 ## Deployment topology
 
 Everything below runs as Docker containers on the existing headless Ubuntu server (`docker-ce` +
-`docker-compose-plugin`, **no Docker Desktop**):
+`docker-compose-plugin`, **no Docker Desktop**, confirmed Docker 29.7.2 / Compose v5.5.0):
 
 - `minio` (already running)
 - `n8n` (already running — gains a read/write bind mount to the vault-mirror folder)
-- `livesync-cli` (new, `daemon` mode)
-- `searxng` (new)
-- `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder)
-- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`, network-only access to `searxng`)
+- `livesync-cli` (new, `daemon` mode) — no explicit network needed (volumes + outbound HTTPS only)
+- `searxng` (new) — on the project's own `pebble-agent-internal` network only, not reachable by n8n or
+  the host directly
+- `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder) — on n8n's existing
+  `n8n_n8n_internal` network (external), so n8n's MCP Client Tool node can reach it
+- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both `n8n_n8n_internal` (reachable by n8n)
+  and `pebble-agent-internal` (reachable by `searxng`)
+
+**Project directory on the server:** `/data/projects/pebble-index-research-agent/repo` (a plain `git
+clone` of this repo, re-`git pull`-able on future updates). The real `docker/.env` (gitignored, MinIO
+creds + SearXNG config) lives alongside it there — never in this repo. See `docs/SETUP.md` Phase 0.5
+for the exact bootstrap commands and the reasoning behind the two-network split.
 
 See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current (in-progress) service
 definitions.
+
