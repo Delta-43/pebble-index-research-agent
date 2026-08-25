@@ -160,4 +160,40 @@ smartwatch", same real-result check as `spike-mcp-bridge`'s `mcp-searxng` valida
 warning is expected and harmless: `wikidata: engine init was not successful` (HTTP 403 from that one
 upstream engine) — other engines (google cse, duckduckgo, etc.) work fine.
 
+## n8n workflow build (`n8n-workflow-trigger`, `n8n-workflow-agent`)
+
+**`n8n import:workflow` requires a top-level `id` field on the workflow JSON — undocumented in
+`--help`, and the error doesn't say so directly.** A workflow JSON with no top-level `id` (just
+`name`/`nodes`/`connections`/etc., the way many shared workflow exports look) fails with:
+```
+null value in column "id" of relation "workflow_entity" violates not-null constraint
+```
+Fix: include a top-level `"id"` (any unique string works — this project uses a random 16-hex-char
+string, not necessarily a full UUID).
+
+**Don't guess node `type`/`typeVersion`/parameter names from memory or docs — read them out of the
+running instance instead.** Every n8n node ships a declarative schema at
+`.../n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/<nodeName>/v<N>.ts` (and the
+`@n8n/n8n-nodes-langchain` equivalent for AI nodes) inside the container, with the exact `type` string,
+`typeVersion`, and every parameter name/shape for that version — e.g. find it with `find / -iname
+"*McpClientTool*"` inside the container, then read the highest-numbered `vN.ts`. This is how this
+project's `n8n/workflows/pebble-index-research-agent.json` was built, and it's why the MCP Client Tool
+node uses `serverTransport: "sse"` (default is actually `"httpStreamable"`, which would silently fail
+against `mcp-proxy`'s SSE-only endpoints) and why the Agent node's default chat model is `gpt-5-mini`
+rather than an older/deprecated one.
+
+**The Local File Trigger node's output only carries `{ event, path }`, not file content.** (Confirmed
+from `LocalFileTrigger.node.js`'s `trigger()` implementation — it emits exactly `{ event, path }` per
+matched filesystem event, nothing else.) The workflow reads the note's content itself via
+**Read/Write Files from Disk** (`operation: "read"`, `fileSelector: "={{ $json.path }}"`) →
+**Extract from File** (`operation: "text"`) immediately after the trigger, rather than relying on
+`obsidian_read_note` for the very note that triggered the run.
+
+**The same host directory is mounted at *different* container paths in different services** —
+`/vault-mirror` in `n8n` (this project's addition to n8n's own `compose.yml`, read-only) vs. `/vault` in
+`mcp-obsidian` (this project's own `docker-compose.yml`). A **Set** node (`Prepare Agent Input`) strips
+the `/vault-mirror/` prefix off the trigger's absolute path before handing a vault-*relative* path to
+the agent, since `obsidian_create_note`/`obsidian_edit_note` expect paths relative to `mcp-obsidian`'s
+own vault root, not n8n's absolute filesystem path.
+
 

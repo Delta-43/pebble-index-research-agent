@@ -171,19 +171,33 @@ live round-trip tool calls (not just a handshake check). Key findings:
 
 ## Workflow logic (n8n)
 
-1. **Local File Trigger** — new `.md` appears in the watched subfolder.
-2. **Read note** — read the raw transcript text (either directly via n8n's file read, or via
-   `obsidian_read_note`).
-3. **AI Agent** — system prompt instructs the model to:
-   - Summarize the note and identify the core research question(s).
-   - Call the SearXNG `search` tool (possibly multiple times) to gather sources.
-   - Synthesize findings into a well-structured note with a clear, relevant title.
-   - Choose relevant tags.
-   - Call `obsidian_create_note` to save the result into a `Research/` folder, with YAML frontmatter
-     (`tags`, a link back to the source note, creation date).
-   - Optionally call `obsidian_edit_note` on the original transcript to add a backlink to the new
-     research note.
-4. **`livesync-cli` daemon** picks up the new/edited files via its filesystem watcher and pushes them
+**✅ Built and imported (`n8n-workflow-trigger`, `n8n-workflow-agent`, 2026-08-25)** —
+`n8n/workflows/pebble-index-research-agent.json`, validated by actually importing it into the real
+`n8n` instance (`n8n import:workflow`) and exporting it back out to confirm every node/connection
+round-tripped intact. Not yet activated or e2e-tested against a real note — that needs an LLM
+credential attached in the n8n UI first (deliberately left for the user to add post-import, see
+`docs/SETUP.md` Phase 3).
+
+1. **Local File Trigger** (`Watch Index Inbox`) — watches `/vault-mirror/Index Inbox` (the vault mirror,
+   bind-mounted **read-only** into the `n8n` container itself — a real edit to n8n's own shared
+   `compose.yml`, applied and validated live) for `add` events.
+2. **Read Note From Disk** → **Extract Note Text** — reads the new file directly off the mounted mirror
+   and extracts its plain text (`n8n-nodes-base.readWriteFile` + `n8n-nodes-base.extractFromFile`),
+   rather than round-tripping through `obsidian_read_note` for the very note that just triggered the
+   workflow — one fewer tool call, and n8n already needs read access to that path for the trigger
+   itself.
+3. **Prepare Agent Input** — computes the note's vault-*relative* path (`notePath`, stripping the
+   `/vault-mirror/` prefix n8n sees down to what `mcp-obsidian`'s own `/vault` mount expects) alongside
+   the extracted `noteText`, so the two mounts' different container-side paths for the same host
+   directory don't leak into the agent's tool calls.
+4. **Research Agent** (`@n8n/n8n-nodes-langchain.agent`) — system prompt instructs the model to:
+   - Identify the core research question(s) from the transcript (often a fragment — infer intent).
+   - Call the `search` tool (`MCP: mcp-searxng`, possibly multiple times) to gather sources.
+   - Synthesize findings into a well-structured note with a clear, relevant title and 2-5 tags.
+   - Call `obsidian_create_note` (`MCP: obsidian-mcp`) to save the result into `Research/`, with YAML
+     frontmatter (`tags`, `source` — the original note's vault-relative path, `created`).
+   - Call `obsidian_edit_note` on the original note to append a backlink to the new research note.
+5. **`livesync-cli` daemon** picks up the new/edited files via its filesystem watcher and pushes them
    through MinIO, where they sync back down to the phone/desktop automatically.
 
 ## Open questions / spikes
@@ -194,6 +208,7 @@ live round-trip tool calls (not just a handshake check). Key findings:
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 | `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
 | `searxng-service` | Reuse the already-running `n8n-searxng-1`, or stand up a dedicated instance? | ✅ Validated (2026-08-25) — **not** reused. `n8n-searxng-1` turned out to be an internal piece of n8n's own `instance-ai` sandbox feature (chained to `sandbox-api`/a privileged Docker-in-Docker `sandbox-runner-1`), confirmed stopped on the real server whenever that sandbox is idle — an unsuitable, undocumented dependency. Deployed the dedicated `searxng` service instead; full stack (`searxng`, `mcp-obsidian`, `mcp-searxng`) built, started, and round-tripped real MCP tool calls + a live JSON search on `home_server`, with both SSE endpoints confirmed reachable from the real `n8n` container. Two real gotchas hit along the way — see `docs/TROUBLESHOOTING.md`. |
+| `n8n-workflow-trigger` / `n8n-workflow-agent` | Can the actual trigger → agent → tools workflow be built with standard n8n nodes and imported cleanly? | ✅ Validated (2026-08-25) — yes, with one real infra change: the Local File Trigger node needs the vault mirror bind-mounted **into n8n's own container**, which meant editing n8n's own shared `compose.yml` (not owned by this project) and restarting it — done with the user's explicit go-ahead. Sourced exact node `type`/`typeVersion`/parameter names directly from the installed node definitions inside the running `n8n` container (`node_modules/.../dist/node-definitions/...`) rather than guessing — n8n's workflow-JSON schema requires a top-level `id` on import (`null value in column "id"` otherwise), undocumented in the CLI's own `--help`. `n8n/workflows/pebble-index-research-agent.json` imported and round-tripped via `n8n import:workflow`/`export:workflow` with no dropped fields. Not yet activated/e2e-tested — needs an LLM credential added in the n8n UI first. |
 
 ## Deployment topology
 

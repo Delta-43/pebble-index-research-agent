@@ -16,14 +16,19 @@ architecture from scratch, it's already been researched and decided (see "Key de
 ## Current state (as of this writing)
 
 **The full `docker/docker-compose.yml` stack (`livesync-cli`, `searxng`, `mcp-obsidian`, `mcp-searxng`)
-is deployed and validated on the real server (`home_server`, hostname `delta-server`)** — built, started,
-and round-tripped real tool calls (MCP `obsidian-mcp`/`mcp-searxng` calls, a live JSON search, both SSE
-endpoints reachable from the real `n8n` container). What's left is entirely on the n8n side: no workflow
-has been built yet (trigger → agent → tools → save note). Sessions now run directly on `home_server`
-(no `ssh home_server` hop needed) — see `docs/ARCHITECTURE.md`/`docs/SETUP.md`/`docs/TROUBLESHOOTING.md`
-for the real findings behind every service, and `docs/TROUBLESHOOTING.md` in particular for gotchas
-worth re-checking before assuming anything "just works" (Compose's `external: true` network handling,
-SearXNG's `secret_key` startup precondition, the `npx mcp-proxy` impostor package, etc.).
+is deployed and validated on the real server (`home_server`, hostname `delta-server`)**, and the n8n
+workflow itself (`n8n/workflows/pebble-index-research-agent.json`) is built and imported into the real
+`n8n` instance — round-tripped clean via `import:workflow`/`export:workflow`, vault mirror bind-mounted
+into n8n's own container for the trigger. **Not yet done: attaching a real LLM credential and
+activating it** (deliberately left for the user — see `docs/SETUP.md` Phase 3 steps 3-4), so no
+end-to-end test against a real note has run yet. Sessions now run directly on `home_server` (no `ssh
+home_server` hop needed) — see `docs/ARCHITECTURE.md`/`docs/SETUP.md`/`docs/TROUBLESHOOTING.md` for the
+real findings behind every service, and `docs/TROUBLESHOOTING.md` in particular for gotchas worth
+re-checking before assuming anything "just works" (Compose's `external: true` network handling,
+SearXNG's `secret_key` startup precondition, the `npx mcp-proxy` impostor package, n8n's undocumented
+required top-level workflow `id`, etc.). When building/editing n8n workflow JSON, don't guess node
+schemas — read them from `.../dist/node-definitions/nodes/**/v<N>.ts` inside the running `n8n`
+container (see `docs/TROUBLESHOOTING.md`).
 
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
@@ -35,8 +40,9 @@ for a synced task list if one has been added to this repo). As of this writing, 
    **not** reuse the pre-existing `n8n-searxng-1`; see `docs/ARCHITECTURE.md`)
 5. `mcp-obsidian-service`, `mcp-searxng-service` (parallel) — ✅ both done, deployed as real standing
    compose services (not just spike scratch containers) and re-validated end-to-end
-6. `n8n-workflow-trigger`, then `n8n-workflow-agent` — **next up**
-7. `e2e-testing`
+6. `n8n-workflow-trigger`, then `n8n-workflow-agent` — ✅ both done (workflow built, imported,
+   round-tripped; LLM credential + activation deliberately left for the user, see `docs/SETUP.md`)
+7. `e2e-testing` — **next up**, blocked on the user attaching a real LLM credential and activating
 8. `docs-repo` (fill in the still-pending doc sections)
 9. `publish-github` (repo already exists and is public: `Delta-43/pebble-index-research-agent`; this
    step is about final polish/release, not initial creation)

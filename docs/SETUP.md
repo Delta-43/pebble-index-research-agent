@@ -186,8 +186,38 @@ enabled) or stand up a fully separate one (`searxng-service`).
 
 ## Phase 3 — n8n workflow
 
-_Pending — workflow JSON will be exported to `n8n/workflows/` once built._
+**Validated** (`n8n-workflow-trigger`, `n8n-workflow-agent`, 2026-08-25): built, imported into the real
+`n8n` instance, and round-tripped via `import:workflow`/`export:workflow` with no dropped fields. The
+workflow JSON is committed at `n8n/workflows/pebble-index-research-agent.json`. Not yet activated or
+tested against a real note — that's Phase 4, and needs one manual step first (below) that only you can
+safely do, since it needs a real API key.
+
+**Step 1 — mount the vault mirror into n8n itself.** The Local File Trigger node runs inside n8n's own
+container, so it needs read access to the same host path `livesync-cli` writes to. This means editing
+n8n's own `compose.yml` (wherever your n8n stack lives, not this repo) to add a bind mount:
+```yaml
+    volumes:
+      - /data/vault-mirror/vault:/vault-mirror:ro   # adjust to your VAULT_MIRROR_PATH
+```
+then `docker compose up -d n8n` to apply it. This briefly restarts n8n (confirmed: a few seconds of
+downtime, `healthz` recovers on its own once the container comes back up).
+
+**Step 2 — import the workflow:**
+```bash
+docker cp n8n/workflows/pebble-index-research-agent.json n8n:/tmp/wf.json
+docker exec n8n n8n import:workflow --input=/tmp/wf.json
+```
+
+**Step 3 — add an LLM credential.** The workflow ships with its `OpenAI Chat Model` node's credential
+intentionally unset (see `docs/ARCHITECTURE.md`) — open the workflow in the n8n editor, click that node,
+and attach (or create) an OpenAI credential. Using Anthropic or Gemini instead just means swapping that
+one node for the equivalent Chat Model node and reconnecting it to the Agent's `ai_languageModel` input
+— everything else (trigger, tools, prompt) stays the same.
+
+**Step 4 — activate the workflow** in the n8n editor once the credential is attached.
 
 ## Phase 4 — End-to-end test
 
-_Pending._
+_Pending — needs Phase 3's manual steps done first. Once activated, drop a `.md` file into `Index
+Inbox/` in the vault (or record a real note on the ring) and check the `Research/` folder for the
+resulting note, and n8n's Executions list for the run._

@@ -58,7 +58,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
 - [x] Validate stdio→SSE bridging for both MCP servers
 - [x] Docker Compose stack for the server (`livesync-cli`, dedicated `searxng`, `mcp-obsidian`,
       `mcp-searxng` — deployed and round-tripped real tool calls/searches on the real server)
-- [ ] n8n workflow (trigger → agent → tools → save note)
+- [x] n8n workflow (trigger → agent → tools → save note) — built, imported, and round-tripped on the
+      real n8n instance; not yet activated (needs an LLM credential added manually, see `docs/SETUP.md`)
 - [ ] End-to-end test with a real ring recording
 - [ ] Full documentation pass
 
