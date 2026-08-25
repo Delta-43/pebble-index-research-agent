@@ -54,7 +54,7 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open questions, and
 [`docs/SETUP.md`](docs/SETUP.md) for the step-by-step install guide (filled in as each phase is validated).
 
-- [ ] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
+- [x] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
 - [ ] Validate stdio→SSE bridging for both MCP servers
 - [ ] Docker Compose stack for the server
 - [ ] n8n workflow (trigger → agent → tools → save note)

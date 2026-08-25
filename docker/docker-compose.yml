@@ -9,21 +9,26 @@
 
 services:
   # Keeps a plain-Markdown mirror of the Obsidian vault on disk, synced against the same MinIO/S3
-  # remote (or CouchDB) used by the phone's Self-hosted LiveSync plugin.
+  # remote (Journal Sync) used by the phone's Self-hosted LiveSync plugin.
+  #
+  # VALIDATED (spike-livesync-s3): this builds and runs correctly. `settings.json` must exist and be
+  # already configured (via `init-settings` + `setup <Setup URI>` + a one-time `unlock-remote` for a
+  # new device) before this service starts — see docs/SETUP.md Phase 1 for the exact bootstrap
+  # sequence. That bootstrap is not yet automated here (still a manual one-time step, since it needs
+  # the Setup URI's passphrase entered interactively); `vault-mirror-service` will wire it up properly
+  # (e.g. an init container, or a documented `docker compose run` bootstrap command).
   livesync-cli:
     build:
       context: https://github.com/vrtmrz/obsidian-livesync.git
       dockerfile: src/apps/cli/Dockerfile
     container_name: livesync-cli
     restart: unless-stopped
-    command: ["daemon", "--vault", "/vault"]
+    command: ["--settings", "/data/livesync-settings.json", "--vault", "/vault", "daemon"]
     volumes:
       - livesync_db:/data
       - vault_mirror:/vault
-    environment:
-      LIVESYNC_DB_PATH: /data
-    # TODO(spike-livesync-s3): confirm remote-add/setup flags for a MinIO/S3 remote + passphrase,
-    # and whether they're passed via settings.json, env vars, or CLI args.
+    # NOTE: the official image writes files as root (no non-root user configured) — anything else
+    # (mcp-obsidian, n8n Local File Trigger) reading/writing `vault_mirror` needs to tolerate that.
 
   # Self-hosted meta search engine backing the research MCP tool.
   searxng:

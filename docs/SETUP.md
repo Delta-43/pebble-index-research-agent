@@ -46,7 +46,42 @@ docker run --rm hello-world
 
 ## Phase 1 — Vault mirror (`livesync-cli`)
 
-_Pending validation — see `docs/ARCHITECTURE.md`._
+**Validated** against a real MinIO/S3 remote using Journal Sync (see `docs/ARCHITECTURE.md` and
+`docs/TROUBLESHOOTING.md` for full details/gotchas). Summary of the working bootstrap sequence:
+
+```bash
+# 1. Build the CLI image (once)
+git clone --depth 1 https://github.com/vrtmrz/obsidian-livesync.git
+cd obsidian-livesync
+docker build -f src/apps/cli/Dockerfile -t livesync-cli .
+
+# 2. Create a fresh settings file
+docker run --rm -v <data-dir>:/data livesync-cli init-settings /data/livesync-settings.json
+
+# 3. Apply the Setup URI exported from Obsidian (Settings -> Sync Settings -> copy/QR "Setup URI")
+printf '%s\n' "$SETUP_URI_PASSCODE" | \
+  docker run -i --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+    --settings /data/livesync-settings.json setup "$SETUP_URI"
+
+# 4. One-time device acceptance (only needed the first time a new device connects)
+docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+  --settings /data/livesync-settings.json --vault /vault unlock-remote <remote-id>
+
+# 5. Pull once and materialise real files, then verify
+docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+  --settings /data/livesync-settings.json --vault /vault sync
+docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+  --settings /data/livesync-settings.json --vault /vault mirror
+
+# 6. Run continuously (this is what the docker-compose `livesync-cli` service does)
+docker run -d --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+  --settings /data/livesync-settings.json --vault /vault daemon
+```
+
+Remaining for `vault-mirror-service`: wire the above into the standing compose service (persist
+`settings.json` in the `livesync_db` volume, run steps 2-4 as a one-time bootstrap rather than on every
+container start), and resolve the root-owned-files permission question noted in
+`docs/TROUBLESHOOTING.md`.
 
 ## Phase 2 — MCP servers
 

@@ -15,30 +15,70 @@ self-hosted **MinIO** (S3-compatible) bucket rather than Obsidian's official pai
 CouchDB server.
 
 Self-hosted LiveSync does not store your vault in the bucket as plain, individually readable `.md`
-files — it replicates its internal chunked/PouchDB-style document model as objects. That means you
-can't just point a file-watcher at the MinIO bucket and expect readable Markdown.
+files — it replicates its internal document model as encrypted objects. **Confirmed on the real
+bucket:** it uses LiveSync's E2EE **"Journal Sync"** mode, storing gzip-then-encrypted journal chunks
+named `master-vault<timestamp>-docs.jsonl.gz` plus a `master-vault_00000000-milestone.json`
+coordination doc — not plain per-note files, and not a raw CouchDB replication log either. That means
+you can't just point a file-watcher (or even `gunzip`) at the MinIO bucket and expect readable
+Markdown; you need `livesync-cli` to decrypt and materialize it.
 
 ## Getting a real, plain-Markdown mirror on the server
 
 `vrtmrz/obsidian-livesync` ships a companion CLI (`src/apps/cli`, package name `livesync-cli`) that
 implements the same sync protocol as the Obsidian plugin, without needing Obsidian (or any Electron/GUI)
-running:
+running.
 
-- `livesync-cli <db-path> daemon --vault <mirror-path>` performs an initial mirror scan, then
-  continuously syncs in both directions:
-  - **remote → local filesystem**: via the CouchDB `_changes` feed (or polling, `--interval N`)
-  - **local filesystem → remote**: via `chokidar` file watching
-- It ships with an official `Dockerfile` and a systemd unit + `install.sh` for non-Docker installs.
-- Its `util/minio-init.sh` / `minio-stop.sh` scripts in the repo indicate S3/MinIO remotes are part of
-  its own test matrix, in addition to the more thoroughly-documented CouchDB path.
+**✅ Validated (`spike-livesync-s3`, 2026-08-25) against the real MinIO remote.** Key findings:
 
-**This is the load-bearing assumption for the whole project and the first thing to validate**
-(see `spike-livesync-s3` below) — specifically, whether `remote-add`/`setup` cleanly accepts a MinIO
-endpoint + the same encryption passphrase used by the phone's plugin, and whether `daemon` mode keeps
-the mirror folder live in both directions without manual intervention.
+- The user's actual remote is **not** CouchDB-over-S3 and not raw per-note files — it's LiveSync's
+  **"Journal Sync"** mode (an E2EE, object-storage-native sync protocol, distinct from CouchDB
+  replication). The bucket (`obsidian-bucket`) contains encrypted journal chunks named
+  `master-vault<timestamp>-docs.jsonl.gz` plus `master-vault_00000000-milestone.json` (a coordination
+  doc) and `master-vault_obsidian_livesync_journal_sync_parameters.json`. These are genuinely encrypted
+  — even the `.gz` files don't gunzip without going through the CLI's own decryption, confirming true
+  end-to-end encryption at rest.
+- `livesync-cli`'s shared `@vrtmrz/livesync-commonlib` explicitly implements `LiveSyncJournalReplicator`
+  (alongside `LiveSyncCouchDBReplicator`), so Journal Sync is a first-class, supported remote type
+  (`"remoteType": "MINIO"` in `settings.json`), not an incidental side effect of S3-compatible CouchDB.
+- **Recommended bootstrap path**: rather than hand-typing the MinIO endpoint/bucket/access
+  key/secret/passphrase, export the plugin's **Setup URI** from Obsidian (Settings → Sync Settings →
+  copy/QR "Setup URI") and apply it directly:
+  ```bash
+  livesync-cli init-settings /data/livesync-settings.json
+  printf '%s\n' "$SETUP_URI_PASSCODE" | \
+    livesync-cli /data --settings /data/livesync-settings.json --vault /vault setup "$SETUP_URI"
+  ```
+  This populates `settings.json` with the real `endpoint`, `bucket`, `accessKey`/`secretKey`,
+  `bucketPrefix`, `chunkSplitterVersion`, and E2EE settings verbatim from the plugin's own config —
+  no manual transcription, no risk of a typo'd passphrase.
+- **First-time device handshake:** a brand-new device (like a freshly bootstrapped CLI) hits a
+  **remote lock**: `[Error] The remote database is locked and this device is not yet accepted.` This is
+  Journal Sync's safety mechanism — a milestone document on the remote tracks `locked` +
+  `accepted_nodes`, and any device not yet in `accepted_nodes` is refused until it either resets its
+  local state and re-syncs, or (simpler, and what worked here) the operator runs
+  `livesync-cli ... unlock-remote <remote-id>` once. This is a one-time step per new device, not a
+  per-sync-cycle requirement.
+- `sync` (one-shot) pulls the encrypted replication log but — in CLI mode — does **not** automatically
+  materialize it into `.md` files (`[Info] Replication result received, but not processed automatically
+  in CLI mode.`). Use `mirror [vault-path]` after a `sync` to write the actual plain-Markdown files to
+  disk, or use `daemon` mode, which runs a mirror scan (both directions) on startup and then keeps
+  watching. Confirmed: `daemon` mode picks up local filesystem changes via its file watcher and pushes
+  a new `docs.jsonl.gz` journal entry within seconds; `rm <path>` + `sync` correctly propagates
+  deletions back to the remote too.
+- Files written by the official Docker image are owned by **root** inside the container (no non-root
+  user is configured), since the image doesn't drop privileges. Anything else that needs to read/write
+  the same mounted vault-mirror volume (e.g. `obsidian-mcp`, n8n's Local File Trigger) will need either
+  matching container UID/GID, host directory permissions opened up, or the `livesync-cli` container
+  configured to run as a specific non-root UID — to be resolved in `vault-mirror-service`.
+- The real ring-notes folder in this vault is **`Index Inbox/`** (not a hypothetical `Pebble Notes/`),
+  with frontmatter `tags: [index, index_note]` on each transcribed note — useful for wiring the n8n
+  Local File Trigger path precisely in `n8n-workflow-trigger`.
+- It ships with an official `Dockerfile` (`src/apps/cli/Dockerfile`, built successfully via
+  `docker build -f src/apps/cli/Dockerfile -t livesync-cli .` from the repo root) and a systemd unit +
+  `install.sh` for non-Docker installs.
 
-Once validated, the server ends up with a directory (e.g. `/srv/vault-mirror/`) that always mirrors the
-real vault as plain files — this is what n8n and the Obsidian MCP server both operate on.
+The server now ends up with a directory (e.g. `/srv/vault-mirror/`) that always mirrors the real vault
+as plain files — this is what n8n and the Obsidian MCP server both operate on.
 
 ## Trigger
 
@@ -89,7 +129,7 @@ inside the n8n container itself. This bridging approach is the second thing to v
 
 | Spike | Question | Status |
 |---|---|---|
-| `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | Pending |
+| `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | Pending |
 
 ## Deployment topology
