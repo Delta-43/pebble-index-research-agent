@@ -166,6 +166,8 @@ live round-trip tool calls (not just a handshake check). Key findings:
   isolated the way this project wants a dedicated `searxng` service to be. This makes reuse — rather
   than standing up a second, separate SearXNG — worth strongly considering when `searxng-service`
   executes; deferred to that todo since it also needs to weigh shared-resource/blast-radius concerns.
+  **Resolved in `searxng-service` (see the table below): not reused** — turned out to be an internal
+  piece of n8n's own sandbox feature, not a general-purpose instance.
 
 ## Workflow logic (n8n)
 
@@ -191,6 +193,7 @@ live round-trip tool calls (not just a handshake check). Key findings:
 | `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 | `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
+| `searxng-service` | Reuse the already-running `n8n-searxng-1`, or stand up a dedicated instance? | ✅ Validated (2026-08-25) — **not** reused. `n8n-searxng-1` turned out to be an internal piece of n8n's own `instance-ai` sandbox feature (chained to `sandbox-api`/a privileged Docker-in-Docker `sandbox-runner-1`), confirmed stopped on the real server whenever that sandbox is idle — an unsuitable, undocumented dependency. Deployed the dedicated `searxng` service instead; full stack (`searxng`, `mcp-obsidian`, `mcp-searxng`) built, started, and round-tripped real MCP tool calls + a live JSON search on `home_server`, with both SSE endpoints confirmed reachable from the real `n8n` container. Two real gotchas hit along the way — see `docs/TROUBLESHOOTING.md`. |
 
 ## Deployment topology
 
@@ -200,8 +203,9 @@ Everything below runs as Docker containers on the existing headless Ubuntu serve
 - `minio` (already running)
 - `n8n` (already running — gains a read/write bind mount to the vault-mirror folder)
 - `livesync-cli` (new, `daemon` mode) — no explicit network needed (volumes + outbound HTTPS only)
-- `searxng` (new) — on the project's own `pebble-agent-internal` network only, not reachable by n8n or
-  the host directly
+- `searxng` (new, dedicated to this project — deliberately not the pre-existing `n8n-searxng-1`, see
+  `searxng-service` above) — on the project's own `pebble-agent-internal` network only, not reachable by
+  n8n or the host directly
 - `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder) — on n8n's existing
   `n8n_n8n_internal` network (external), so n8n's MCP Client Tool node can reach it
 - `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both `n8n_n8n_internal` (reachable by n8n)

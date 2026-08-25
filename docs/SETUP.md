@@ -84,11 +84,10 @@ Instead:
   MinIO, both of which work on Docker's default bridge.
 
 Remaining for later todos: `vault-mirror-service` still needs to automate the one-time
-`init-settings`/`setup`/`unlock-remote` bootstrap (currently manual, see Phase 1); `searxng-service`
-still needs to decide reuse-vs-isolate against the already-running `n8n-searxng-1` (see
-`docs/ARCHITECTURE.md`).
+`init-settings`/`setup`/`unlock-remote` bootstrap (currently manual, see Phase 1) — the bind-mount
+wiring itself is done. `searxng-service` is resolved: **not** reusing `n8n-searxng-1` (see Phase 2).
 
-
+## Phase 1 — Vault mirror bootstrap (`livesync-cli`)
 
 **Validated** against a real MinIO/S3 remote using Journal Sync (see `docs/ARCHITECTURE.md` and
 `docs/TROUBLESHOOTING.md` for full details/gotchas). Summary of the working bootstrap sequence:
@@ -122,17 +121,38 @@ docker run -d --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
   --settings /data/livesync-settings.json --vault /vault daemon
 ```
 
-Remaining for `vault-mirror-service`: wire the above into the standing compose service (persist
-`settings.json` in the `livesync_db` volume, run steps 2-4 as a one-time bootstrap rather than on every
-container start), and resolve the root-owned-files permission question noted in
+**VALIDATED** (`vault-mirror-service`): the standing `livesync-cli` compose service now bind-mounts
+`VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH` (host directories set in `docker/.env`) instead of scratch
+named volumes, so `settings.json` and the mirrored vault persist at a stable, known host path other
+services (`mcp-obsidian`, later n8n's Local File Trigger) can share directly. Steps 2-4 above (init,
+setup, unlock-remote) are still a manual one-time bootstrap, not run automatically on container start —
+that automation, and the root-owned-files permission question, remain open for a future pass; see
 `docs/TROUBLESHOOTING.md`.
 
-## Phase 2 — MCP servers
+## Phase 2 — MCP servers & SearXNG
 
 **Validated** (`spike-mcp-bridge`) that `sparfenyuk/mcp-proxy` can bridge both stdio MCP servers to SSE
 endpoints n8n's MCP Client Tool node can call — see `docs/ARCHITECTURE.md` and
 `docs/TROUBLESHOOTING.md` for full findings/gotchas (in particular: **do not** `npx -y mcp-proxy`, that
 resolves to an unrelated npm package).
+
+**Validated** (`searxng-service`, 2026-08-25) on the real server. Turns out the already-running
+`n8n-searxng-1` is an internal piece of n8n's own `instance-ai` sandbox feature (chained to a privileged
+Docker-in-Docker sandbox runner), not a general-purpose instance — it sits stopped whenever that sandbox
+is idle, independent of n8n's own uptime. Standing up this project's own dedicated `searxng` (already
+sketched in `docker-compose.yml`) instead. One-time setup before first deploy:
+
+```bash
+cp docker/searxng/settings.yml.example docker/searxng/settings.yml
+sed -i "s/ultrasecretkey/$(openssl rand -hex 32)/" docker/searxng/settings.yml
+```
+
+`settings.yml` is gitignored (holds a real secret) — `settings.yml.example` is the tracked template.
+**Do skip this step and current SearXNG (2026.8.22) will crash-loop at startup**: it hard-refuses to run
+at all with the literal `ultrasecretkey` placeholder still in place (`server.secret_key is not
+changed... [ERROR] Unexpected exit from worker-1`) — this is a startup precondition now, not just a
+CSRF-hardening suggestion. Confirmed working after generating a real secret: `docker compose up -d
+searxng` starts cleanly and `/search?format=json` returns real results.
 
 ```bash
 # --- obsidian-mcp bridge ---

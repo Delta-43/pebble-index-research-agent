@@ -125,4 +125,39 @@ SSE handshake check):**
 - `obsidian-mcp@2` logs a harmless `[LEGACY_MCP_PROTOCOL]` warning against `mcp-proxy` (2025-era
   handshake) — expected, not a bug; do not add `--legacy reject`.
 
+## SearXNG deployment (`searxng-service`)
+
+**Declaring a project network without `external: true` silently creates a differently-named,
+duplicate network — even when a network of the intended name already exists.** `docker-compose.yml`
+declared `pebble-agent-internal` as a plain `driver: bridge` network. `docs/SETUP.md` Phase 0.5 already
+creates a real `pebble-agent-internal` network as a one-time manual step before first deploy — but
+without `external: true`, Compose doesn't know that and instead creates its own
+`<project-name>_pebble-agent-internal` (project name defaults to the directory the compose file lives
+in, e.g. `docker` here → `docker_pebble-agent-internal`), and attaches `searxng` to *that* instead.
+Confirmed on `home_server`: `docker compose up -d searxng` created `docker_pebble-agent-internal`
+alongside the pre-existing (correct) `pebble-agent-internal`, silently diverging from the network every
+other doc/comment in this repo references by name. Fix: mark it `external: true` in
+`docker-compose.yml` so Compose reuses the network Phase 0.5 already created, rather than assuming
+Compose will infer that from the name alone.
+
+**Current SearXNG (2026.8.22) refuses to start at all with the default `secret_key` placeholder** —
+this is new/stronger behavior than older "just rotate it before exposing publicly" guidance suggests.
+Leaving `server.secret_key: "ultrasecretkey"` in a bind-mounted `settings.yml` (bind-mounting bypasses
+the image's own entrypoint, which only auto-randomizes a *freshly generated* settings.yml, never one
+supplied via a mount) causes an immediate, permanent crash loop:
+```
+ERROR:searx.webapp: server.secret_key is not changed. Please use something else instead of ultrasecretkey.
+[ERROR] Unexpected exit from worker-1
+```
+This happens regardless of network exposure — confirmed it crash-loops even fully isolated on
+`pebble-agent-internal` with no published port and no reachability from n8n or the host. Fix: generate
+a real secret before first deploy — `docker/searxng/settings.yml.example` (tracked) has the placeholder
+and the exact command; `docker/searxng/settings.yml` (gitignored, holds the real secret) is what's
+actually mounted. After that, `docker compose up -d searxng` starts cleanly and `curl
+'http://searxng:8080/search?q=...&format=json'` from another container on `pebble-agent-internal`
+returns real results (confirmed with a real query — live repebble.com/pebblecart.com hits for "pebble
+smartwatch", same real-result check as `spike-mcp-bridge`'s `mcp-searxng` validation). One non-fatal
+warning is expected and harmless: `wikidata: engine init was not successful` (HTTP 403 from that one
+upstream engine) — other engines (google cse, duckduckgo, etc.) work fine.
+
 

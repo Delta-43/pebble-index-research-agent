@@ -15,20 +15,27 @@ architecture from scratch, it's already been researched and decided (see "Key de
 
 ## Current state (as of this writing)
 
-**Nothing has been deployed yet.** The repo currently contains documentation and a *skeleton*
-`docker/docker-compose.yml` with `TODO` markers — none of it has been run or validated on real
-infrastructure. Do not assume any service config in `docker/docker-compose.yml` works; treat it as a
-first draft to be corrected once the spikes below are done.
+**The full `docker/docker-compose.yml` stack (`livesync-cli`, `searxng`, `mcp-obsidian`, `mcp-searxng`)
+is deployed and validated on the real server (`home_server`, hostname `delta-server`)** — built, started,
+and round-tripped real tool calls (MCP `obsidian-mcp`/`mcp-searxng` calls, a live JSON search, both SSE
+endpoints reachable from the real `n8n` container). What's left is entirely on the n8n side: no workflow
+has been built yet (trigger → agent → tools → save note). Sessions now run directly on `home_server`
+(no `ssh home_server` hop needed) — see `docs/ARCHITECTURE.md`/`docs/SETUP.md`/`docs/TROUBLESHOOTING.md`
+for the real findings behind every service, and `docs/TROUBLESHOOTING.md` in particular for gotchas
+worth re-checking before assuming anything "just works" (Compose's `external: true` network handling,
+SearXNG's `secret_key` startup precondition, the `npx mcp-proxy` impostor package, etc.).
 
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 
-1. `spike-livesync-s3` — validate `livesync-cli` daemon mode against the user's real MinIO/S3 remote
-2. `spike-mcp-bridge` — validate `mcp-proxy` bridging stdio MCP servers to SSE for n8n
-3. `server-base-setup` — confirm Docker Engine + compose plugin on the target Ubuntu server
-4. `vault-mirror-service`, `searxng-service` (parallel)
-5. `mcp-obsidian-service`, `mcp-searxng-service` (parallel)
-6. `n8n-workflow-trigger`, then `n8n-workflow-agent`
+1. `spike-livesync-s3` — ✅ done
+2. `spike-mcp-bridge` — ✅ done
+3. `server-base-setup` — ✅ done
+4. `vault-mirror-service`, `searxng-service` (parallel) — ✅ both done (searxng-service deliberately did
+   **not** reuse the pre-existing `n8n-searxng-1`; see `docs/ARCHITECTURE.md`)
+5. `mcp-obsidian-service`, `mcp-searxng-service` (parallel) — ✅ both done, deployed as real standing
+   compose services (not just spike scratch containers) and re-validated end-to-end
+6. `n8n-workflow-trigger`, then `n8n-workflow-agent` — **next up**
 7. `e2e-testing`
 8. `docs-repo` (fill in the still-pending doc sections)
 9. `publish-github` (repo already exists and is public: `Delta-43/pebble-index-research-agent`; this
@@ -36,8 +43,10 @@ for a synced task list if one has been added to this repo). As of this writing, 
 
 ## Environment / access notes
 
-- The target deployment server is a headless Ubuntu machine reachable over SSH as `home_server`
-  (an SSH config alias — do not ask the user for an IP; just `ssh home_server`).
+- The target deployment server is a headless Ubuntu machine, historically reachable over SSH as
+  `home_server` (an SSH config alias). Some agent sessions run directly on that server already (check
+  `hostname` — `delta-server` means you're on it); in that case skip the `ssh home_server` hop entirely
+  and run `docker`/`git` commands directly.
 - MinIO is already running on that same server, backing the user's Obsidian **Self-hosted LiveSync**
   plugin.
 - n8n is already running and reachable from that server.

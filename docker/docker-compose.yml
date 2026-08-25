@@ -4,9 +4,10 @@
 # your existing compose project with this file via `docker compose -f existing.yml -f docker-compose.yml`)
 # once their exact service names/networks are known.
 #
-# STATUS: foundation + vault mirror validated (spike-livesync-s3, spike-mcp-bridge, server-base-setup,
-# vault-mirror-service) — networks, secrets, and the vault-mirror bind mounts below are real and tested.
-# searxng-service and later steps are still pending. Do not deploy as-is without completing those.
+# STATUS: foundation + vault mirror + searxng validated (spike-livesync-s3, spike-mcp-bridge,
+# server-base-setup, vault-mirror-service, searxng-service) — every service below has a real, tested
+# config. Not yet deployed together as a single up-to-date stack on home_server (see docs/SETUP.md) —
+# n8n-workflow-trigger and n8n-workflow-agent are still pending.
 #
 # Networking (validated server-base-setup, 2026-08-25): `n8n_n8n_internal` is n8n's own existing Docker
 # network (external to this project) — mcp-obsidian and mcp-searxng join it so n8n's MCP Client Tool
@@ -48,10 +49,14 @@ services:
 
   # Self-hosted meta search engine backing the research MCP tool.
   #
-  # NOTE (spike-mcp-bridge): an existing n8n-searxng-1 container is already running on this server
-  # (part of n8n's own sandbox stack) with JSON format already enabled and reachable only via the
-  # internal n8n network — worth reusing instead of standing up a second instance; decide during
-  # searxng-service.
+  # VALIDATED (searxng-service): deliberately NOT reusing the already-running `n8n-searxng-1` — turns
+  # out it's an internal component of n8n's own `instance-ai` sandbox feature (wired to
+  # sandbox-api/sandbox-runner-1, a privileged Docker-in-Docker container), not a general-purpose
+  # instance. Confirmed on home_server it sits stopped whenever that sandbox is idle, independent of
+  # n8n's own uptime — an unsuitable, undocumented dependency for a standalone published stack. This
+  # dedicated instance stays fully decoupled instead. `docker/searxng/settings.yml.example` is the
+  # committed template (JSON format, needed by mcp-searxng); copy it to `settings.yml` (gitignored,
+  # holds a real generated secret_key — see docs/SETUP.md Phase 2) before first deploy.
   searxng:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
@@ -59,8 +64,7 @@ services:
     networks:
       - pebble-agent-internal
     volumes:
-      - searxng_config:/etc/searxng
-    # TODO: enable JSON format in settings.yml (`formats: [html, json]`) so mcp-searxng can query it.
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
 
   # Bridges the stdio obsidian-mcp server to an SSE endpoint n8n can call.
   #
@@ -104,8 +108,10 @@ networks:
   n8n_n8n_internal:
     external: true
   # Dedicated to this project: keeps `searxng` reachable only by `mcp-searxng`, not by n8n or the host.
+  # external because docs/SETUP.md Phase 0.5 already creates it (`docker network create
+  # pebble-agent-internal`) as a plain, unprefixed network name — without `external: true` here, Compose
+  # instead creates and uses its own `<project-name>_pebble-agent-internal` (e.g. `docker_...` when this
+  # compose file lives in a directory named `docker`), silently diverging from the network Phase 0.5 set
+  # up and from every other doc/comment in this repo that references `pebble-agent-internal` by name.
   pebble-agent-internal:
-    driver: bridge
-
-volumes:
-  searxng_config:
+    external: true
