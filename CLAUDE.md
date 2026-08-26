@@ -1,6 +1,11 @@
 # CLAUDE.md
 
-Guidance for Claude Code (or any AI coding agent) picking up work on this repository.
+Guidance for Claude Code (or any AI coding agent) picking up work on this repository. This file
+documents *this specific reference deployment* (its real hostnames, network names, folder names,
+server paths) for continuity across sessions — it is not the public-facing guide. Someone else
+following `README.md`/`docs/SETUP.md` to deploy their own instance will have different specifics
+throughout; don't treat values here (e.g. `home_server`, `n8n_n8n_internal`, `Index Inbox`) as
+requirements for anyone else's deployment.
 
 ## What this project is
 
@@ -84,7 +89,7 @@ for a synced task list if one has been added to this repo). As of this writing, 
   API key with free choice of underlying model — not a local/Ollama model, and not a single locked-in
   provider — per explicit user preference for customizability. The node's `model` parameter is a plain
   string (e.g. `openai/gpt-5-mini`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`), so
-  swapping models never requires touching the node graph — see `docs/SETUP.md` Phase 3.
+  swapping models never requires touching the node graph — see `docs/SETUP.md` Phase 4.
 - **Trigger**: n8n's built-in **Local File Trigger** node, watching the ring-notes subfolder inside the
   mirrored vault directory (mounted into the n8n container).
 

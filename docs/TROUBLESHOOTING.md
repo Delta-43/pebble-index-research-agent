@@ -158,7 +158,7 @@ SSE handshake check):**
 
 **Declaring a project network without `external: true` silently creates a differently-named,
 duplicate network — even when a network of the intended name already exists.** `docker-compose.yml`
-declared `pebble-agent-internal` as a plain `driver: bridge` network. `docs/SETUP.md` Phase 0.5 already
+declared `pebble-agent-internal` as a plain `driver: bridge` network. `docs/SETUP.md` Phase 1 already
 creates a real `pebble-agent-internal` network as a one-time manual step before first deploy — but
 without `external: true`, Compose doesn't know that and instead creates its own
 `<project-name>_pebble-agent-internal` (project name defaults to the directory the compose file lives
@@ -166,7 +166,7 @@ in, e.g. `docker` here → `docker_pebble-agent-internal`), and attaches `searxn
 Confirmed on `home_server`: `docker compose up -d searxng` created `docker_pebble-agent-internal`
 alongside the pre-existing (correct) `pebble-agent-internal`, silently diverging from the network every
 other doc/comment in this repo references by name. Fix: mark it `external: true` in
-`docker-compose.yml` so Compose reuses the network Phase 0.5 already created, rather than assuming
+`docker-compose.yml` so Compose reuses the network Phase 1 already created, rather than assuming
 Compose will infer that from the name alone.
 
 **Current SearXNG (2026.8.22) refuses to start at all with the default `secret_key` placeholder** —
@@ -199,6 +199,15 @@ null value in column "id" of relation "workflow_entity" violates not-null constr
 ```
 Fix: include a top-level `"id"` (any unique string works — this project uses a random 16-hex-char
 string, not necessarily a full UUID).
+
+**Re-importing this workflow's JSON (e.g. after `git pull`-ing an updated version) silently overwrites
+any live customization** — the credential you attached, the model you picked, and the active/published
+state all get reset to whatever's in the file, with no warning and no diff shown. Confirmed by
+re-importing this repo's own committed file over a live, working, customized instance: the credential
+was dropped, the model reverted to the file's default, and the workflow was deactivated (needing a
+`publish:workflow` + restart to recover — see below). If you've customized the workflow after your
+first import, either re-apply your credential/model afterward, or export your current live version
+first (`n8n export:workflow --id=<id>`) and diff before re-importing.
 
 **Don't guess node `type`/`typeVersion`/parameter names from memory or docs — read them out of the
 running instance instead.** Every n8n node ships a declarative schema at

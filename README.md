@@ -3,8 +3,12 @@
 Turn a voice note captured on your [Core Devices Pebble Index 01](https://repebble.com/index) ring into an
 auto-researched, auto-tagged note in your Obsidian vault — no manual copy/paste required.
 
-> **Status: 🚧 Work in progress.** This repo is being built and documented in the open. See
-> [Project Status](#project-status) for what's validated vs. still in progress.
+> **Status: core pipeline validated end-to-end on a real deployment** — trigger, agent, web research, and
+> sync-back all confirmed working (see [Project Status](#project-status)). Not yet tested with an actual
+> ring recording (only a manually-dropped note so far).
+
+**→ [`docs/SETUP.md`](docs/SETUP.md) has the full step-by-step deployment guide.** This README covers
+the *what* and *why*; `docs/SETUP.md` is what you actually follow to deploy it yourself.
 
 ## How it works
 
@@ -25,6 +29,10 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
                                             │
      livesync-cli syncs it back through MinIO → appears on your phone/desktop
 ```
+
+> The "ring-notes subfolder" name and n8n's Docker network name are specific to *this* project's own
+> deployment (`Index Inbox/` and `n8n_n8n_internal`, respectively) — yours will likely be named
+> differently. `docs/SETUP.md` shows how to find/set your own for both.
 
 ## Why this design
 
@@ -51,8 +59,8 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
 
 ## Project status
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open questions, and
-[`docs/SETUP.md`](docs/SETUP.md) for the step-by-step install guide (filled in as each phase is validated).
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and rationale, and
+[`docs/SETUP.md`](docs/SETUP.md) for the step-by-step install guide.
 
 - [x] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
 - [x] Validate stdio→SSE bridging for both MCP servers
@@ -66,7 +74,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
       to MinIO correctly, and that this works with **zero Obsidian instances live on any device** (see
       `docs/TROUBLESHOOTING.md`)
 - [ ] Test with a real ring recording (so far tested with a manually-dropped note)
-- [ ] Full documentation pass
+- [x] Full documentation pass — repo generalized for other users to replicate (parameterized network
+      name, called out vault-specific values, rewrote `docs/SETUP.md` as a linear step-by-step guide)
 
 ## Prerequisites
 

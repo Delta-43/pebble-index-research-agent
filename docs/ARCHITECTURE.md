@@ -83,7 +83,10 @@ as plain files — this is what n8n and the Obsidian MCP server both operate on.
 ## Trigger
 
 n8n's **Local File Trigger** node watches the ring-transcript subfolder inside the mounted mirror volume
-(e.g. `/srv/vault-mirror/Pebble Notes/`) for new files.
+for new files. **The exact subfolder name is vault-specific** — this project's real-world testing found
+the Pebble app saves transcribed notes to `Index Inbox/`, but that may differ for you (check your own
+vault, or the app's settings) — see `docs/SETUP.md` for how to adjust the trigger's path if yours is
+different.
 
 ## Agent & tools
 
@@ -172,16 +175,19 @@ live round-trip tool calls (not just a handshake check). Key findings:
 
 ## Workflow logic (n8n)
 
-**✅ Built and imported (`n8n-workflow-trigger`, `n8n-workflow-agent`, 2026-08-25)** —
-`n8n/workflows/pebble-index-research-agent.json`, validated by actually importing it into the real
-`n8n` instance (`n8n import:workflow`) and exporting it back out to confirm every node/connection
-round-tripped intact. Not yet activated or e2e-tested against a real note — that needs an LLM
-credential attached in the n8n UI first (deliberately left for the user to add post-import, see
-`docs/SETUP.md` Phase 3).
+**✅ Built, imported, activated, and e2e-tested (`n8n-workflow-trigger`, `n8n-workflow-agent`,
+`e2e-testing`, 2026-08-25)** — `n8n/workflows/pebble-index-research-agent.json`, validated by actually
+importing it into a real `n8n` instance (`n8n import:workflow`) and exporting it back out to confirm
+every node/connection round-tripped intact, then activating it and running a real note through the
+whole pipeline. The `OpenRouter Chat Model` node's credential ships intentionally unset — attach your
+own after import (see `docs/SETUP.md` Phase 4).
 
 1. **Local File Trigger** (`Watch Index Inbox`) — watches `/vault-mirror/Index Inbox` (the vault mirror,
    bind-mounted **read-only** into the `n8n` container itself — a real edit to n8n's own shared
-   `compose.yml`, applied and validated live) for `add` events.
+   `compose.yml`, applied and validated live) for `add` events. `Index Inbox` is this project's real
+   vault's folder name for ring transcripts — if yours differs, edit this node's `path` after import
+   (nothing else needs to change: the folder name flows through automatically via step 3's path
+   expression, which only strips the `/vault-mirror/` mount prefix, not the folder name itself).
 2. **Read Note From Disk** → **Extract Note Text** — reads the new file directly off the mounted mirror
    and extracts its plain text (`n8n-nodes-base.readWriteFile` + `n8n-nodes-base.extractFromFile`),
    rather than round-tripping through `obsidian_read_note` for the very note that just triggered the
@@ -223,15 +229,17 @@ Everything below runs as Docker containers on the existing headless Ubuntu serve
   `searxng-service` above) — on the project's own `pebble-agent-internal` network only, not reachable by
   n8n or the host directly
 - `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder) — on n8n's existing
-  `n8n_n8n_internal` network (external), so n8n's MCP Client Tool node can reach it
-- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both `n8n_n8n_internal` (reachable by n8n)
-  and `pebble-agent-internal` (reachable by `searxng`)
+  network (external, name set via `N8N_NETWORK_NAME` — see `docker/.env.example`; this project's own
+  deployment calls it `n8n_n8n_internal`, yours will likely be named differently), so n8n's MCP Client
+  Tool node can reach it
+- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both n8n's network (reachable by n8n) and
+  `pebble-agent-internal` (reachable by `searxng`)
 
-**Project directory on the server:** `/data/projects/pebble-index-research-agent/repo` (a plain `git
-clone` of this repo, re-`git pull`-able on future updates). The real `docker/.env` (gitignored, MinIO
-creds + SearXNG config) lives alongside it there — never in this repo. See `docs/SETUP.md` Phase 0.5
-for the exact bootstrap commands and the reasoning behind the two-network split.
+**Project directory on the server:** this project's own deployment uses
+`/data/projects/pebble-index-research-agent/repo` (a plain `git clone` of this repo, re-`git
+pull`-able on future updates) — any directory works. The real `docker/.env` (gitignored, MinIO creds +
+SearXNG config) lives alongside it there — never in this repo. See `docs/SETUP.md` Phase 1 for the
+exact bootstrap commands and the reasoning behind the two-network split.
 
-See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current (in-progress) service
-definitions.
+See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current service definitions.
 

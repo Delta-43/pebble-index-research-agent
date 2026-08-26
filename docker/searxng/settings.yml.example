@@ -1,4 +1,4 @@
-# Copy to settings.yml and generate a real secret_key before first deploy — see docs/SETUP.md Phase 2.
+# Copy to settings.yml and generate a real secret_key before first deploy — see docs/SETUP.md Phase 1.
 # Never commit the real settings.yml (it holds a real secret_key); this template is what's tracked.
 #
 # `use_default_settings: true` merges this over SearXNG's built-in defaults, so only the overrides
