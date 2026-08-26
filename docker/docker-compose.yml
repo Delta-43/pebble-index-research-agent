@@ -1,20 +1,21 @@
 # Pebble Index Research Agent — server-side stack
 #
-# Assumes `minio` and `n8n` already exist elsewhere on this server/network. Add them here (or extend
-# your existing compose project with this file via `docker compose -f existing.yml -f docker-compose.yml`)
-# once their exact service names/networks are known.
+# Assumes `minio` and `n8n` already exist elsewhere on this server/network — this file doesn't start
+# them. See docs/SETUP.md for the full deployment walkthrough; this compose file is deployed
+# standalone from the `docker/` directory (`docker compose up -d`), not merged into your n8n/minio
+# compose project.
 #
-# STATUS: foundation + vault mirror + searxng validated (spike-livesync-s3, spike-mcp-bridge,
-# server-base-setup, vault-mirror-service, searxng-service) — every service below has a real, tested
-# config. Not yet deployed together as a single up-to-date stack on home_server (see docs/SETUP.md) —
-# n8n-workflow-trigger and n8n-workflow-agent are still pending.
+# STATUS: every service below is deployed and validated end-to-end on a real server, including a real
+# note → trigger → web search → research note round trip. See docs/ARCHITECTURE.md and
+# docs/TROUBLESHOOTING.md for the real findings and gotchas behind each service.
 #
-# Networking (validated server-base-setup, 2026-08-25): `n8n_n8n_internal` is n8n's own existing Docker
-# network (external to this project) — mcp-obsidian and mcp-searxng join it so n8n's MCP Client Tool
-# node can reach their SSE endpoints (this exact reachability was tested in spike-mcp-bridge from the
-# real running n8n container). `pebble-agent-internal` is a new network dedicated to this project, used
-# to keep `searxng` reachable only by `mcp-searxng` (not directly by n8n or the host) — `mcp-searxng`
-# bridges both networks.
+# Networking: n8n's own existing Docker network (external to this project, name set via
+# N8N_NETWORK_NAME in .env — run `docker network ls` and find the one your n8n container is on, or
+# `docker inspect <your-n8n-container> --format '{{json .NetworkSettings.Networks}}'`) is joined by
+# mcp-obsidian and mcp-searxng so n8n's MCP Client Tool node can reach their SSE endpoints (this exact
+# reachability was validated end-to-end against a real running n8n container — see docs/ARCHITECTURE.md).
+# `pebble-agent-internal` is a new network dedicated to this project, used to keep `searxng` reachable
+# only by `mcp-searxng` (not directly by n8n or the host) — `mcp-searxng` bridges both networks.
 
 services:
   # Keeps a plain-Markdown mirror of the Obsidian vault on disk, synced against the same MinIO/S3
@@ -22,7 +23,7 @@ services:
   #
   # VALIDATED (spike-livesync-s3): this builds and runs correctly. `settings.json` must exist and be
   # already configured (via `init-settings` + `setup <Setup URI>` + a one-time `unlock-remote` for a
-  # new device) before this service starts — see docs/SETUP.md Phase 1 for the exact bootstrap
+  # new device) before this service starts — see docs/SETUP.md Phase 2 for the exact bootstrap
   # sequence. That bootstrap is not yet automated here (still a manual one-time step, since it needs
   # the Setup URI's passphrase entered interactively).
   #
@@ -47,16 +48,15 @@ services:
     # NOTE: the official image writes files as root (no non-root user configured) — anything else
     # (mcp-obsidian, n8n Local File Trigger) reading/writing the vault mirror needs to tolerate that.
 
-  # Self-hosted meta search engine backing the research MCP tool.
-  #
-  # VALIDATED (searxng-service): deliberately NOT reusing the already-running `n8n-searxng-1` — turns
-  # out it's an internal component of n8n's own `instance-ai` sandbox feature (wired to
-  # sandbox-api/sandbox-runner-1, a privileged Docker-in-Docker container), not a general-purpose
-  # instance. Confirmed on home_server it sits stopped whenever that sandbox is idle, independent of
-  # n8n's own uptime — an unsuitable, undocumented dependency for a standalone published stack. This
-  # dedicated instance stays fully decoupled instead. `docker/searxng/settings.yml.example` is the
-  # committed template (JSON format, needed by mcp-searxng); copy it to `settings.yml` (gitignored,
-  # holds a real generated secret_key — see docs/SETUP.md Phase 2) before first deploy.
+  # Self-hosted meta search engine backing the research MCP tool. This project runs its own dedicated
+  # instance rather than trying to reuse one you might already have — during development, an existing
+  # `n8n-searxng-1` was found running near n8n, but it turned out to be an internal component of n8n's
+  # own `instance-ai` sandbox feature (only up while that sandbox is active, stopped otherwise), not a
+  # general-purpose instance. If you also have an existing SearXNG nearby, verify what it's actually
+  # for before reusing it — see docs/ARCHITECTURE.md's `searxng-service` entry for the full story.
+  # `docker/searxng/settings.yml.example` is the committed template (JSON format, needed by
+  # mcp-searxng); copy it to `settings.yml` (gitignored, holds a real generated secret_key — see
+  # docs/SETUP.md Phase 1) before first deploy.
   searxng:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
@@ -77,7 +77,7 @@ services:
     container_name: mcp-obsidian
     restart: unless-stopped
     networks:
-      - n8n_n8n_internal
+      - n8n_internal
     volumes:
       - ${VAULT_MIRROR_PATH:-./vault-mirror-vault}:/vault
     ports:
@@ -96,7 +96,7 @@ services:
     environment:
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
     networks:
-      - n8n_n8n_internal
+      - n8n_internal
       - pebble-agent-internal
     depends_on:
       - searxng
@@ -105,13 +105,17 @@ services:
 
 networks:
   # n8n's own existing network — external because this project doesn't own/manage n8n's compose stack.
-  n8n_n8n_internal:
+  # `name` is set from N8N_NETWORK_NAME (docker/.env) since every n8n install names this differently;
+  # find yours with `docker network ls` or `docker inspect <your-n8n-container> --format
+  # '{{json .NetworkSettings.Networks}}'`.
+  n8n_internal:
     external: true
+    name: ${N8N_NETWORK_NAME}
   # Dedicated to this project: keeps `searxng` reachable only by `mcp-searxng`, not by n8n or the host.
-  # external because docs/SETUP.md Phase 0.5 already creates it (`docker network create
+  # external because docs/SETUP.md Phase 1 already creates it (`docker network create
   # pebble-agent-internal`) as a plain, unprefixed network name — without `external: true` here, Compose
   # instead creates and uses its own `<project-name>_pebble-agent-internal` (e.g. `docker_...` when this
-  # compose file lives in a directory named `docker`), silently diverging from the network Phase 0.5 set
+  # compose file lives in a directory named `docker`), silently diverging from the network Phase 1 set
   # up and from every other doc/comment in this repo that references `pebble-agent-internal` by name.
   pebble-agent-internal:
     external: true
