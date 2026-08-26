@@ -72,6 +72,12 @@ services:
   # Uses the real `sparfenyuk/mcp-proxy` (Python) — NOT `npx -y mcp-proxy`, which resolves to an
   # unrelated npm package (see docs/TROUBLESHOOTING.md). The vault path needs a pre-existing (empty is
   # fine) `.obsidian/` directory, since Journal Sync doesn't replicate it — not yet automated here.
+  #
+  # SECURITY: deliberately NOT publishing a host port. This endpoint has no authentication (by design —
+  # see docs/ARCHITECTURE.md, network isolation is the intended security boundary, not app-level auth)
+  # and can read/write the whole vault. n8n reaches it over `n8n_internal` by Docker DNS
+  # (`mcp-obsidian:8801`); a host port adds zero functionality and only adds unauthenticated
+  # read/write-the-vault exposure to the LAN (and possibly WAN, depending on router/firewall config).
   mcp-obsidian:
     build: ./mcp-obsidian
     container_name: mcp-obsidian
@@ -80,14 +86,15 @@ services:
       - n8n_internal
     volumes:
       - ${VAULT_MIRROR_PATH:-./vault-mirror-vault}:/vault
-    ports:
-      - "8801:8801"
 
   # Bridges the stdio mcp-searxng server to an SSE endpoint n8n can call.
   #
   # VALIDATED (spike-mcp-bridge): built and tested end-to-end (real live search results returned).
   # mcp-searxng is installed from git source, not PyPI (PyPI 0.1.0 is incompatible with current
   # SearXNG's JSON schema — see docs/TROUBLESHOOTING.md).
+  #
+  # SECURITY: same reasoning as mcp-obsidian above — no host port, no auth needed; n8n reaches it via
+  # Docker DNS (`mcp-searxng:8802`) on `n8n_internal`.
   mcp-searxng:
     build: ./mcp-searxng
     container_name: mcp-searxng
@@ -100,8 +107,6 @@ services:
       - pebble-agent-internal
     depends_on:
       - searxng
-    ports:
-      - "8802:8802"
 
 networks:
   # n8n's own existing network — external because this project doesn't own/manage n8n's compose stack.
