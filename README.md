@@ -1,5 +1,11 @@
 # Pebble Index Research Agent
 
+[![License: AGPL v3](https://img.shields.io/badge/license-AGPL%20v3-blue.svg?style=plastic)](LICENSE)
+[![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=plastic)](https://github.com/Delta-43/pebble-index-research-agent/graphs/commit-activity)
+[![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED.svg?style=plastic&logo=docker&logoColor=white)](docker/docker-compose.yml)
+[![Built with n8n](https://img.shields.io/badge/built%20with-n8n-EA4B71.svg?style=plastic)](https://n8n.io/)
+[![GitHub last commit](https://img.shields.io/github/last-commit/Delta-43/pebble-index-research-agent.svg?style=plastic)](https://github.com/Delta-43/pebble-index-research-agent/commits/main)
+
 Turn a voice note captured on your [Core Devices Pebble Index 01](https://repebble.com/index) ring into an
 auto-researched, auto-tagged note in your Obsidian vault — no manual copy/paste required.
 
@@ -9,25 +15,26 @@ auto-researched, auto-tagged note in your Obsidian vault — no manual copy/past
 **→ [`docs/SETUP.md`](docs/SETUP.md) has the full step-by-step deployment guide.** This README covers
 the *what* and *why*; `docs/SETUP.md` is what you actually follow to deploy it yourself.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Why this design](#why-this-design)
+- [Components](#components)
+- [Project status](#project-status)
+- [Documentation](#documentation)
+- [Prerequisites](#prerequisites)
+- [License](#license)
+
 ## How it works
 
-```
-Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
-     → Self-hosted LiveSync plugin → MinIO (S3-compatible) bucket
-                                            │
-                    [ headless Ubuntu server, Docker Engine — no Docker Desktop required ]
-                                            │
-     livesync-cli (daemon mode) ──────► plain .md mirror folder on disk (bidirectional)
-                                            │
-     n8n Local File Trigger watches the ring-notes subfolder
-                                            │
-     n8n AI Agent (OpenRouter, any model) ──uses──► MCP: obsidian-mcp   (read / write / tag notes)
-                                       └──uses──► MCP: mcp-searxng (web research via self-hosted SearXNG)
-                                            │
-     New research note (title + tags) written back into the vault mirror
-                                            │
-     livesync-cli syncs it back through MinIO → appears on your phone/desktop
-```
+<p align="center">
+  <img src="docs/images/pipeline.svg" alt="Pipeline diagram: a ring recording flows through the Pebble app, Self-hosted LiveSync, and MinIO to a headless server, where a shared vault-mirror hub feeds an n8n trigger and agent, which researches the topic via SearXNG and writes a tagged note back into the same vault mirror." width="640">
+</p>
+
+<p align="center"><sub>New notes flow back through the same MinIO sync path to your phone/desktop
+automatically — no device needs to be online at the same time as any other (see
+<a href="docs/TROUBLESHOOTING.md#livesync-cli--vault-mirror-spike-livesync-s3">TROUBLESHOOTING.md</a>
+for why).</sub></p>
 
 > The "ring-notes subfolder" name and n8n's Docker network name are specific to *this* project's own
 > deployment (`Index Inbox/` and `n8n_n8n_internal`, respectively) — yours will likely be named
@@ -88,4 +95,16 @@ for the detailed validation history if you want the evidence behind that claim.
 
 ## License
 
-[MIT](LICENSE)
+[GNU AGPLv3](LICENSE) — chosen specifically because this is self-hosted software: AGPL's network-use
+clause means anyone who runs a modified version of this project as a service for others must also make
+their modified source available, closing the "SaaS loophole" that plain GPL leaves open.
+
+---
+
+<p align="center">
+  <a href="https://github.com/Delta-43/pebble-index-research-agent/graphs/contributors">
+    <img src="https://contrib.rocks/image?repo=Delta-43/pebble-index-research-agent" alt="Contributors" />
+  </a>
+</p>
+
+<p align="center"><sub>Licensed under <a href="LICENSE">GNU AGPLv3</a>.</sub></p>
