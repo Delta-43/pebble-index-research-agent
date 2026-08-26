@@ -3,9 +3,8 @@
 Turn a voice note captured on your [Core Devices Pebble Index 01](https://repebble.com/index) ring into an
 auto-researched, auto-tagged note in your Obsidian vault — no manual copy/paste required.
 
-> **Status: core pipeline validated end-to-end on a real deployment** — trigger, agent, web research, and
-> sync-back all confirmed working (see [Project Status](#project-status)). Not yet tested with an actual
-> ring recording (only a manually-dropped note so far).
+> **Status: fully validated end-to-end on a real deployment, including a real ring recording** —
+> trigger, agent, web research, and sync-back all confirmed working (see [Project Status](#project-status)).
 
 **→ [`docs/SETUP.md`](docs/SETUP.md) has the full step-by-step deployment guide.** This README covers
 the *what* and *why*; `docs/SETUP.md` is what you actually follow to deploy it yourself.
@@ -73,7 +72,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and ratio
 - [x] End-to-end test — sync-back half: confirmed `livesync-cli` picks up and pushes new/edited files
       to MinIO correctly, and that this works with **zero Obsidian instances live on any device** (see
       `docs/TROUBLESHOOTING.md`)
-- [ ] Test with a real ring recording (so far tested with a manually-dropped note)
+- [x] Test with a real ring recording — confirmed working end-to-end; also surfaced and fixed a real
+      agent-behavior bug in the process (see `docs/TROUBLESHOOTING.md`)
 - [x] Full documentation pass — repo generalized for other users to replicate (parameterized network
       name, called out vault-specific values, rewrote `docs/SETUP.md` as a linear step-by-step guide)
 

@@ -209,6 +209,41 @@ was dropped, the model reverted to the file's default, and the workflow was deac
 first import, either re-apply your credential/model afterward, or export your current live version
 first (`n8n export:workflow --id=<id>`) and diff before re-importing.
 
+**If you only need to change one field on a live, customized workflow (e.g. tweak the system prompt),
+don't re-import the whole file — patch it surgically instead.** n8n's own MCP server (if you have it
+connected) exposes an `update_workflow` tool with a `setNodeParameter` operation that edits a single
+node parameter by JSON-Pointer path without touching anything else — confirmed safe (credential and
+model untouched) where a full re-import would have clobbered both (see above). Editing via this path
+still creates a new **draft** version rather than publishing immediately — call `publish_workflow` (or
+the CLI's `n8n publish:workflow`) afterward, then restart n8n, same as any other activation change.
+
+**A real ring recording surfaced a genuine agent-behavior bug that no amount of infra testing would
+catch: the agent sometimes makes an unnecessary extra tool call that destroys its own good work.**
+First real end-to-end test (2026-08-26, `poolside/laguna-s-2.1:free` via OpenRouter): the agent
+searched correctly and called `obsidian_create_note` with a complete, well-structured note — confirmed
+via the full execution trace (`get_workflow_execution` with `includeData: true`) that the tool call's
+`content` argument was the full, correct note. It then, unprompted, called `obsidian_read_note` on the
+note it had just created (not instructed to), followed by `obsidian_edit_note` with `operation:
+"replace"` and a single stray sentence fragment as `content` — overwriting its own good note with
+near-nothing. n8n reported the execution as `"status": "success"` throughout; there was no error
+anywhere, because from n8n's perspective every tool call succeeded. This is invisible to any
+infrastructure-level check and can only be caught by actually reading the resulting note.
+- **Diagnosis required real execution data**, which needs the workflow's "MCP access" toggle enabled
+  in the n8n UI first (off by default) — without it, `search_workflow_executions`/
+  `get_workflow_execution` return `"Workflow is not available in MCP"`. Once enabled, `truncateData: 1`
+  and filtering by `nodeNames: ["Research Agent"]` keeps the (very large — 150k+ characters
+  untruncated) response manageable.
+- **Fix**: tightened the system prompt with an explicit step 8 forbidding any further tool calls on the
+  research note after creation (`"Do not call obsidian_read_note, obsidian_edit_note, or any other tool
+  on the research note after step 6... immediately respond with your final answer and make no further
+  tool calls"`), plus emphasizing steps 6-7 happen **once**. Re-tested against the same real note after
+  the fix (via the surgical `update_workflow` patch above): the agent created the note once, appended
+  the backlink once, and stopped — no extra calls, confirmed via a fresh execution trace.
+- This is inherently a **prompt-engineering mitigation, not a structural guarantee** — a different or
+  future model could still misbehave differently. If you see a research note that looks truncated or
+  wrong despite a `"success"` execution, check the full execution trace before assuming it's an infra
+  problem.
+
 **Don't guess node `type`/`typeVersion`/parameter names from memory or docs — read them out of the
 running instance instead.** Every n8n node ships a declarative schema at
 `.../n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/<nodeName>/v<N>.ts` (and the

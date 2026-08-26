@@ -201,9 +201,14 @@ own after import (see `docs/SETUP.md` Phase 4).
    - Identify the core research question(s) from the transcript (often a fragment — infer intent).
    - Call the `search` tool (`MCP: mcp-searxng`, possibly multiple times) to gather sources.
    - Synthesize findings into a well-structured note with a clear, relevant title and 2-5 tags.
-   - Call `obsidian_create_note` (`MCP: obsidian-mcp`) to save the result into `Research/`, with YAML
-     frontmatter (`tags`, `source` — the original note's vault-relative path, `created`).
-   - Call `obsidian_edit_note` on the original note to append a backlink to the new research note.
+   - Call `obsidian_create_note` (`MCP: obsidian-mcp`) **once** to save the result into `Research/`,
+     with YAML frontmatter (`tags`, `source` — the original note's vault-relative path, `created`).
+   - Call `obsidian_edit_note` **once** on the original note to append a backlink to the new research
+     note, then stop — explicitly instructed not to call any further tools on the research note.
+     Added after a real ring recording (`e2e-testing`, 2026-08-26) showed the agent could otherwise loop
+     back and destructively overwrite its own just-created note with a stray fragment — a genuine
+     agent-behavior bug invisible to any infra-level check, since n8n reports the run as `"success"`
+     regardless. See `docs/TROUBLESHOOTING.md` for the full trace and fix.
 5. **`livesync-cli` daemon** picks up the new/edited files via its filesystem watcher and pushes them
    through MinIO, where they sync back down to the phone/desktop automatically.
 
