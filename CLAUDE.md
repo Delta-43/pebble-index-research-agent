@@ -127,9 +127,10 @@ If you find any of the above is wrong once tested against real infrastructure, u
   or web search summaries — several details in this space (e.g. exact CLI flags, MCP bridging behavior)
   were not fully verifiable ahead of time and are flagged as spikes for a reason.
 - `mcp-obsidian`/`mcp-searxng` publish to GHCR on every push to `main` that touches their Dockerfiles
-  (`.github/workflows/docker-publish.yml`). **First publish needs a one-time manual step**: GHCR
-  packages built via `GITHUB_TOKEN` from a public repo default to *private* regardless of the repo's own
-  visibility — go to the package's own Settings on GitHub (Profile → Packages → the package) and set
-  visibility to Public once, or `docker compose pull` will fail for anyone else with "denied". Not
-  something to redo per-push, just once ever (or again if a package ever gets recreated under a new
-  name).
+  (`.github/workflows/docker-publish.yml`). **Confirmed (2026-08-26, first real publish + anonymous
+  pull test)**: both packages came up public automatically — `docker pull` worked with zero
+  authentication immediately after the first workflow run, no manual visibility step needed. (Docs
+  elsewhere online say GHCR packages built via `GITHUB_TOKEN` default to private regardless of repo
+  visibility — that either doesn't apply here or has changed; trust this repo's own confirmed behavior
+  over that general advice. If a *future* publish ever comes up private, check the package's own
+  Settings on GitHub — Profile → Packages → the package — and set visibility to Public.)
