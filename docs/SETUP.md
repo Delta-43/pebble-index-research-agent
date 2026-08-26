@@ -139,7 +139,17 @@ docker compose up -d --build
 ```
 
 This starts `livesync-cli` (in continuous `daemon` mode — picks up from the one-shot bootstrap above),
-`searxng`, `mcp-obsidian`, and `mcp-searxng`. Verify each:
+`searxng`, `mcp-obsidian`, and `mcp-searxng`, building `mcp-obsidian`/`mcp-searxng` from source.
+
+**Prefer not building locally?** `mcp-obsidian` and `mcp-searxng` are also published to GHCR on every
+change (see `.github/workflows/docker-publish.yml`) — `docker compose pull && docker compose up -d`
+uses those pre-built images instead, skipping the build step entirely. `--build` always takes priority
+over a pulled image if you use both, so switching back and forth is safe. Either way, both images read
+their config from environment variables at runtime (`MCP_PORT` on both; `VAULT_NAME`/`VAULT_MOUNT` on
+`mcp-obsidian`) — see each Dockerfile's comments, or [Reconfiguring things
+later](#reconfiguring-things-later) generally.
+
+Verify each service:
 
 ```bash
 # searxng: real search results, JSON format. No host port is published (internal-only by design), so
@@ -292,6 +302,13 @@ defaults.
 **n8n's Docker network changed name** (e.g. you recreated its compose project) — update
 `N8N_NETWORK_NAME` in `docker/.env`, then `docker compose up -d` (from `docker/`) to reattach
 `mcp-obsidian`/`mcp-searxng`.
+
+**Change the internal port `mcp-obsidian`/`mcp-searxng` listen on, or `mcp-obsidian`'s vault name** —
+set `MCP_PORT` (both images) or `VAULT_NAME`/`VAULT_MOUNT` (`mcp-obsidian` only) as `environment:`
+entries on the relevant service in `docker/docker-compose.yml`, then `docker compose up -d`. These are
+internal-only (no host port published — see the security note in `docker-compose.yml`), so there's
+rarely a reason to change them, but both images read their config from env vars rather than baking it
+into the image specifically so this doesn't require a rebuild.
 
 **Pulling an updated version of this repo** — `git pull`, then re-run any changed Dockerfile/compose
 steps (`docker compose up -d --build`, from `docker/`). If `n8n/workflows/pebble-index-research-agent.json`
