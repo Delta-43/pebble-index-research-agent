@@ -126,3 +126,10 @@ If you find any of the above is wrong once tested against real infrastructure, u
 - Prefer validating assumptions against the real server (`ssh home_server`) over trusting documentation
   or web search summaries — several details in this space (e.g. exact CLI flags, MCP bridging behavior)
   were not fully verifiable ahead of time and are flagged as spikes for a reason.
+- `mcp-obsidian`/`mcp-searxng` publish to GHCR on every push to `main` that touches their Dockerfiles
+  (`.github/workflows/docker-publish.yml`). **First publish needs a one-time manual step**: GHCR
+  packages built via `GITHUB_TOKEN` from a public repo default to *private* regardless of the repo's own
+  visibility — go to the package's own Settings on GitHub (Profile → Packages → the package) and set
+  visibility to Public once, or `docker compose pull` will fail for anyone else with "denied". Not
+  something to redo per-push, just once ever (or again if a package ever gets recreated under a new
+  name).

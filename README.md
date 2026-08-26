@@ -4,6 +4,7 @@
 [![Maintenance](https://img.shields.io/badge/Maintained%3F-yes-green.svg?style=plastic)](https://github.com/Delta-43/pebble-index-research-agent/graphs/commit-activity)
 [![Docker Compose](https://img.shields.io/badge/docker-compose-2496ED.svg?style=plastic&logo=docker&logoColor=white)](docker/docker-compose.yml)
 [![Built with n8n](https://img.shields.io/badge/built%20with-n8n-EA4B71.svg?style=plastic)](https://n8n.io/)
+[![Published on GHCR](https://img.shields.io/badge/image-ghcr.io-2496ED.svg?style=plastic&logo=docker&logoColor=white)](https://github.com/Delta-43?tab=packages&repo_name=pebble-index-research-agent)
 [![GitHub last commit](https://img.shields.io/github/last-commit/Delta-43/pebble-index-research-agent.svg?style=plastic)](https://github.com/Delta-43/pebble-index-research-agent/commits/main)
 
 Turn a voice note captured on your [Core Devices Pebble Index 01](https://repebble.com/index) ring into an
@@ -58,6 +59,10 @@ Customizable (see [Reconfiguring things later](docs/SETUP.md#reconfiguring-thing
 - **No exposed attack surface** — every MCP/service endpoint is internal-only (Docker network isolation,
   no published host ports); secrets never touch git (`docker/.env` and the generated SearXNG secret are
   gitignored — `docker/.env.example` documents what's needed instead).
+- **Pull instead of build, if you want** — `mcp-obsidian` and `mcp-searxng` (the two images this project
+  actually builds) are published to GHCR on every change; `docker compose pull` skips building them from
+  source. Both read their runtime config (port, vault name/mount) from plain environment variables — see
+  [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later).
 
 ## Components
 

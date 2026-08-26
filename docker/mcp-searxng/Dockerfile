@@ -12,5 +12,9 @@ RUN apt-get update \
 RUN pip install --no-cache-dir "mcp<2" mcp-proxy \
     "git+https://github.com/SecretiveShell/MCP-searxng.git"
 
-ENTRYPOINT ["mcp-proxy", "--host", "0.0.0.0", "--pass-environment"]
-CMD ["--port", "8802", "--", "mcp-searxng"]
+# Configurable at `docker run`/compose time. SEARXNG_URL is read directly by mcp-searxng itself
+# (forwarded through by --pass-environment) — set it to point at any SearXNG instance, not just the
+# one in this project's own docker-compose.yml.
+ENV MCP_PORT=8802
+
+ENTRYPOINT ["/bin/sh", "-c", "exec mcp-proxy --host 0.0.0.0 --port \"$MCP_PORT\" --pass-environment -- mcp-searxng"]

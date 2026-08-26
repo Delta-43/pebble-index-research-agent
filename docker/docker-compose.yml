@@ -79,6 +79,12 @@ services:
   # (`mcp-obsidian:8801`); a host port adds zero functionality and only adds unauthenticated
   # read/write-the-vault exposure to the LAN (and possibly WAN, depending on router/firewall config).
   mcp-obsidian:
+    # Published on every push to main (see .github/workflows/docker-publish.yml) — `docker compose pull`
+    # fetches this pre-built image instead of building locally. `build:` stays too: `docker compose up
+    # -d --build` (the documented default, see docs/SETUP.md) always builds from source and tags the
+    # result with this same name, ignoring the published image entirely — nothing here changes that
+    # path. Runtime config: MCP_PORT, VAULT_NAME, VAULT_MOUNT env vars (see docker/mcp-obsidian/Dockerfile).
+    image: ghcr.io/delta-43/pebble-index-research-agent/mcp-obsidian:latest
     build: ./mcp-obsidian
     container_name: mcp-obsidian
     restart: unless-stopped
@@ -96,6 +102,9 @@ services:
   # SECURITY: same reasoning as mcp-obsidian above — no host port, no auth needed; n8n reaches it via
   # Docker DNS (`mcp-searxng:8802`) on `n8n_internal`.
   mcp-searxng:
+    # Same pull-or-build story as mcp-obsidian above. Runtime config: MCP_PORT env var, plus
+    # SEARXNG_URL below (see docker/mcp-searxng/Dockerfile).
+    image: ghcr.io/delta-43/pebble-index-research-agent/mcp-searxng:latest
     build: ./mcp-searxng
     container_name: mcp-searxng
     restart: unless-stopped

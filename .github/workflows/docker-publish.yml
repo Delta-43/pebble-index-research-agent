@@ -1,0 +1,62 @@
+name: Publish Docker images
+
+# Builds and publishes this project's own two custom images (mcp-obsidian, mcp-searxng) to GHCR.
+# livesync-cli and searxng are NOT built/published here - they're upstream images
+# (vrtmrz/obsidian-livesync's own Dockerfile, and docker.io/searxng/searxng respectively), not ours to
+# publish. See docs/SETUP.md for how docker-compose.yml uses these published images (or builds locally
+# instead, same as before this workflow existed).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docker/mcp-obsidian/**'
+      - 'docker/mcp-searxng/**'
+      - '.github/workflows/docker-publish.yml'
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [mcp-obsidian, mcp-searxng]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/${{ matrix.image }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=,format=short
+            type=semver,pattern={{version}}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/${{ matrix.image }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
