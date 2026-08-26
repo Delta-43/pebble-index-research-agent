@@ -250,3 +250,52 @@ Within a few seconds, check:
   [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#livesync-cli--vault-mirror-spike-livesync-s3) for how to
   verify sync directly against your MinIO bucket if you want independent confirmation before waiting on
   your phone.
+
+## Reconfiguring things later
+
+Everything below is a one-off edit + restart, not a redeployment — you don't need to repeat Phases 0-5.
+
+**Rotate/update MinIO credentials** — edit `LIVESYNC_S3_*` in `docker/.env`, then
+`docker compose up -d livesync-cli` (from `docker/`). Note the vault's own E2EE passphrase is separate
+from these S3 credentials and isn't stored in `.env` at all (see Phase 2) — rotating your MinIO access
+key doesn't touch it.
+
+**Switch the LLM model or provider** — open the workflow in the n8n editor, click the
+`OpenRouter Chat Model` node, edit the **Model** field (any OpenRouter slug — see Phase 4 step 4).
+Whether this needs a restart to take effect wasn't specifically verified (only trigger-registration
+behavior was confirmed to require one) — restart to be safe:
+`docker compose up -d <your-n8n-service-name>`. It's fast (a few seconds) and always safe.
+
+**Change the ring-notes folder name** (e.g. your Pebble app config changes, or you're adapting this
+for a different note-taking source) — edit the **Watch Index Inbox** node's `Folder to Watch` field in
+the n8n editor (see Phase 4 step 3), then restart n8n. This one likely *does* need the restart even more
+than the model change above: the trigger's filesystem watcher is set up once when the trigger activates,
+so an in-place path edit probably won't move an already-running watcher without a
+deactivate/reactivate-equivalent cycle — restarting is the one path confirmed to work.
+
+**Customize the tags every note gets, or the research note's structure/instructions** — edit the
+`Research Agent` node's **System Message** in the n8n editor (or `n8n/workflows/pebble-index-research-agent.json`
+directly, then re-import — see the re-import warning in `docs/TROUBLESHOOTING.md` before doing that on a
+live, customized workflow). By default every note gets `interests` and `questions` tags in addition to
+2-5 topical ones (step 5 of the prompt) — change or remove that instruction if you want different
+defaults.
+
+**Move the vault-mirror host paths** — edit `VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH` in
+`docker/.env`, move the actual directories on disk to match, then `docker compose up -d` (from
+`docker/`) to pick up the new mounts. Remember n8n's own `compose.yml` also bind-mounts
+`VAULT_MIRROR_PATH` (Phase 4 step 1) — update that mount too, and restart n8n.
+
+**Regenerate the SearXNG secret** (e.g. you suspect it leaked) —
+`sed -i "s/<old-value>/$(openssl rand -hex 32)/" docker/searxng/settings.yml`, then
+`docker compose up -d searxng`.
+
+**n8n's Docker network changed name** (e.g. you recreated its compose project) — update
+`N8N_NETWORK_NAME` in `docker/.env`, then `docker compose up -d` (from `docker/`) to reattach
+`mcp-obsidian`/`mcp-searxng`.
+
+**Pulling an updated version of this repo** — `git pull`, then re-run any changed Dockerfile/compose
+steps (`docker compose up -d --build`, from `docker/`). If `n8n/workflows/pebble-index-research-agent.json`
+changed, **don't blindly re-import it** if you've customized your live workflow (model, credential,
+system prompt) — re-importing silently overwrites all of that with whatever's in the file. See
+`docs/TROUBLESHOOTING.md` for the safer surgical-edit approach, or just manually re-apply the specific
+change from the diff.
