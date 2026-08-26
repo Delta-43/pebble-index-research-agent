@@ -8,6 +8,8 @@
       "type": "n8n-nodes-base.localFileTrigger",
       "typeVersion": 1,
       "position": [-680, 0],
+      "notes": "\"Index Inbox\" is this project's own vault's folder name for ring transcripts. If your Pebble app saves notes to a differently-named folder, change the path below to match — nothing else in this workflow needs to change.",
+      "notesInFlow": true,
       "parameters": {
         "triggerOn": "folder",
         "path": "/vault-mirror/Index Inbox",
