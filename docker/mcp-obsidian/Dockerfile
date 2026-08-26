@@ -11,5 +11,11 @@ RUN apt-get update \
 # `mcp>=1.27.1` constraint (see docs/TROUBLESHOOTING.md).
 RUN pip install --no-cache-dir --break-system-packages "mcp<2" mcp-proxy
 
-ENTRYPOINT ["mcp-proxy", "--host", "0.0.0.0", "--pass-environment"]
-CMD ["--port", "8801", "--", "npx", "-y", "obsidian-mcp@2", "serve", "--vault", "notes=/vault"]
+# Configurable at `docker run`/compose time via env vars — no need to override the whole CMD to change
+# just one thing. VAULT_MOUNT is the *container-internal* mount point; point your bind mount at it
+# (default /vault matches this project's own docker-compose.yml).
+ENV MCP_PORT=8801
+ENV VAULT_NAME=notes
+ENV VAULT_MOUNT=/vault
+
+ENTRYPOINT ["/bin/sh", "-c", "exec mcp-proxy --host 0.0.0.0 --port \"$MCP_PORT\" --pass-environment -- npx -y obsidian-mcp@2 serve --vault \"$VAULT_NAME=$VAULT_MOUNT\""]
