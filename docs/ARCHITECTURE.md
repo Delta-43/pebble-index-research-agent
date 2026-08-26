@@ -80,43 +80,18 @@ running.
 The server now ends up with a directory (e.g. `/srv/vault-mirror/`) that always mirrors the real vault
 as plain files — this is what n8n and the Obsidian MCP server both operate on.
 
-**✅ Validated (`vault-mirror-service`, 2026-08-25):** promoted the spike's scratch setup into a real,
-persistent Docker service.
-
-- `livesync-cli`'s `daemon` mode is now deployed against **host bind mounts**
-  (`VAULT_MIRROR_DATA_PATH` → `/data`, `VAULT_MIRROR_PATH` → `/vault`, both configured in `docker/.env`)
-  rather than anonymous Docker volumes, specifically so other containers (`mcp-obsidian`, and later n8n's
-  own compose stack, which this project doesn't manage) can mount the *exact same host path* by path
-  reference alone, no Docker volume-sharing tricks required.
-- A **fresh** persistent directory, seeded with only the already-bootstrapped `settings.json` (copied
-  from the spike's scratch config, not hand re-derived) and an empty `.obsidian/` folder, correctly
-  triggers a full initial "mirror scan" that pulls **all** existing remote documents down to plain
-  `.md` files on first start — confirmed via `[Daemon] Total files to synchronise: 9` /
-  `Synchronisation completed: ... 3 completed`. No local db state needs to be carried over from a prior
-  install; the encrypted remote is the actual source of truth.
-- **Confirmed true bidirectional live sync**, not just the remote→local direction validated in
-  `spike-livesync-s3`: with `daemon` running, a file created directly on the host bind mount
-  (`vault/_live-watch-test2.md`) was picked up by `livesync-cli`'s `chokidar`-based watcher and pushed
-  to the remote within ~2 seconds (`[Info] STORAGE -> DB (plain) _live-watch-test2.md`, run with
-  `--verbose`); deleting that same file locally correctly propagated as a remote deletion on the next
-  scan (`NEWER_WINS: Treating missing local file as deletion` → `DELETE DATABASE: <path>`).
-- **Root-ownership permission gotcha confirmed and characterized** (previously only theorized in
-  `spike-livesync-s3`): the container runs as root and any *new subdirectory* it creates under the vault
-  mount (e.g. `Index Inbox/`, materialized fresh from a remote-only file) ends up `root:root` mode
-  `755` — writable only by root. A host user can still create files directly in the **vault's top-level
-  directory** (owned by whichever user created that directory originally, e.g. via `mkdir`), but not
-  inside subdirectories the container itself created. This isn't blocking (the container is the
-  intended writer in production; a human wouldn't normally hand-edit the mirror on the server), but it
-  matters for future debugging/testing on this path — see `docs/TROUBLESHOOTING.md`.
-
 ## Trigger
 
 n8n's **Local File Trigger** node watches the ring-transcript subfolder inside the mounted mirror volume
-(e.g. `/srv/vault-mirror/Pebble Notes/`) for new files.
+for new files. **The exact subfolder name is vault-specific** — this project's real-world testing found
+the Pebble app saves transcribed notes to `Index Inbox/`, but that may differ for you (check your own
+vault, or the app's settings) — see `docs/SETUP.md` for how to adjust the trigger's path if yours is
+different.
 
 ## Agent & tools
 
-The n8n workflow's **AI Agent** node (backed by a cloud LLM — OpenAI/Anthropic/Gemini) is given two MCP
+The n8n workflow's **AI Agent** node (backed by [OpenRouter](https://openrouter.ai/) — one API key, any
+underlying model, chosen per explicit user preference over a locked-in single provider) is given two MCP
 tool servers via n8n's **MCP Client Tool** node:
 
 1. **`obsidian-mcp`** (`StevenStavrakis/obsidian-mcp`) — operates directly on the mirrored vault
@@ -195,22 +170,46 @@ live round-trip tool calls (not just a handshake check). Key findings:
   isolated the way this project wants a dedicated `searxng` service to be. This makes reuse — rather
   than standing up a second, separate SearXNG — worth strongly considering when `searxng-service`
   executes; deferred to that todo since it also needs to weigh shared-resource/blast-radius concerns.
+  **Resolved in `searxng-service` (see the table below): not reused** — turned out to be an internal
+  piece of n8n's own sandbox feature, not a general-purpose instance.
 
 ## Workflow logic (n8n)
 
-1. **Local File Trigger** — new `.md` appears in the watched subfolder.
-2. **Read note** — read the raw transcript text (either directly via n8n's file read, or via
-   `obsidian_read_note`).
-3. **AI Agent** — system prompt instructs the model to:
-   - Summarize the note and identify the core research question(s).
-   - Call the SearXNG `search` tool (possibly multiple times) to gather sources.
-   - Synthesize findings into a well-structured note with a clear, relevant title.
-   - Choose relevant tags.
-   - Call `obsidian_create_note` to save the result into a `Research/` folder, with YAML frontmatter
-     (`tags`, a link back to the source note, creation date).
-   - Optionally call `obsidian_edit_note` on the original transcript to add a backlink to the new
-     research note.
-4. **`livesync-cli` daemon** picks up the new/edited files via its filesystem watcher and pushes them
+**✅ Built, imported, activated, and e2e-tested (`n8n-workflow-trigger`, `n8n-workflow-agent`,
+`e2e-testing`, 2026-08-25)** — `n8n/workflows/pebble-index-research-agent.json`, validated by actually
+importing it into a real `n8n` instance (`n8n import:workflow`) and exporting it back out to confirm
+every node/connection round-tripped intact, then activating it and running a real note through the
+whole pipeline. The `OpenRouter Chat Model` node's credential ships intentionally unset — attach your
+own after import (see `docs/SETUP.md` Phase 4).
+
+1. **Local File Trigger** (`Watch Index Inbox`) — watches `/vault-mirror/Index Inbox` (the vault mirror,
+   bind-mounted **read-only** into the `n8n` container itself — a real edit to n8n's own shared
+   `compose.yml`, applied and validated live) for `add` events. `Index Inbox` is this project's real
+   vault's folder name for ring transcripts — if yours differs, edit this node's `path` after import
+   (nothing else needs to change: the folder name flows through automatically via step 3's path
+   expression, which only strips the `/vault-mirror/` mount prefix, not the folder name itself).
+2. **Read Note From Disk** → **Extract Note Text** — reads the new file directly off the mounted mirror
+   and extracts its plain text (`n8n-nodes-base.readWriteFile` + `n8n-nodes-base.extractFromFile`),
+   rather than round-tripping through `obsidian_read_note` for the very note that just triggered the
+   workflow — one fewer tool call, and n8n already needs read access to that path for the trigger
+   itself.
+3. **Prepare Agent Input** — computes the note's vault-*relative* path (`notePath`, stripping the
+   `/vault-mirror/` prefix n8n sees down to what `mcp-obsidian`'s own `/vault` mount expects) alongside
+   the extracted `noteText`, so the two mounts' different container-side paths for the same host
+   directory don't leak into the agent's tool calls.
+4. **Research Agent** (`@n8n/n8n-nodes-langchain.agent`) — system prompt instructs the model to:
+   - Identify the core research question(s) from the transcript (often a fragment — infer intent).
+   - Call the `search` tool (`MCP: mcp-searxng`, possibly multiple times) to gather sources.
+   - Synthesize findings into a well-structured note with a clear, relevant title and 2-5 tags.
+   - Call `obsidian_create_note` (`MCP: obsidian-mcp`) **once** to save the result into `Research/`,
+     with YAML frontmatter (`tags`, `source` — the original note's vault-relative path, `created`).
+   - Call `obsidian_edit_note` **once** on the original note to append a backlink to the new research
+     note, then stop — explicitly instructed not to call any further tools on the research note.
+     Added after a real ring recording (`e2e-testing`, 2026-08-26) showed the agent could otherwise loop
+     back and destructively overwrite its own just-created note with a stray fragment — a genuine
+     agent-behavior bug invisible to any infra-level check, since n8n reports the run as `"success"`
+     regardless. See `docs/TROUBLESHOOTING.md` for the full trace and fix.
+5. **`livesync-cli` daemon** picks up the new/edited files via its filesystem watcher and pushes them
    through MinIO, where they sync back down to the phone/desktop automatically.
 
 ## Open questions / spikes
@@ -220,7 +219,8 @@ live round-trip tool calls (not just a handshake check). Key findings:
 | `spike-livesync-s3` | Does `livesync-cli daemon` work cleanly against the existing MinIO remote + passphrase, in both directions, unattended? | ✅ Validated — see findings above. Remote uses Journal Sync (not CouchDB); Setup URI + one-time `unlock-remote` bootstraps a new device; `daemon` mode confirmed bidirectional. |
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 | `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
-| `vault-mirror-service` | Does a persistently deployed `livesync-cli daemon` container keep a real bidirectional plain-Markdown mirror on host bind mounts? | ✅ Validated — see findings above. Deployed against `/data/vault-mirror/{data,vault}` bind mounts (not anonymous volumes); confirmed real bidirectional sync (local create → remote push within ~2s; local delete → remote delete) with `--verbose` logging, not just the remote→local direction from `spike-livesync-s3`. |
+| `searxng-service` | Reuse the already-running `n8n-searxng-1`, or stand up a dedicated instance? | ✅ Validated (2026-08-25) — **not** reused. `n8n-searxng-1` turned out to be an internal piece of n8n's own `instance-ai` sandbox feature (chained to `sandbox-api`/a privileged Docker-in-Docker `sandbox-runner-1`), confirmed stopped on the real server whenever that sandbox is idle — an unsuitable, undocumented dependency. Deployed the dedicated `searxng` service instead; full stack (`searxng`, `mcp-obsidian`, `mcp-searxng`) built, started, and round-tripped real MCP tool calls + a live JSON search on `home_server`, with both SSE endpoints confirmed reachable from the real `n8n` container. Two real gotchas hit along the way — see `docs/TROUBLESHOOTING.md`. |
+| `n8n-workflow-trigger` / `n8n-workflow-agent` | Can the actual trigger → agent → tools workflow be built with standard n8n nodes and imported cleanly? | ✅ Fully validated end-to-end (2026-08-25). Built with two real infra changes on top of the initial import: the Local File Trigger node needs the vault mirror bind-mounted **into n8n's own container** (a shared `compose.yml` edit, done with the user's go-ahead), and two n8n security defaults (`NODES_EXCLUDE`, `N8N_RESTRICT_FILE_ACCESS_TO`) needed explicit overrides or the trigger silently never activates — see `docs/TROUBLESHOOTING.md` for exactly what that looked like in the logs, since neither surfaced as an import/publish/UI error. Sourced exact node `type`/`typeVersion`/parameter names directly from the installed node definitions inside the running `n8n` container rather than guessing. Model backend switched to **OpenRouter** (`@n8n/n8n-nodes-langchain.lmChatOpenRouter`) per explicit user preference for free choice of underlying model over a locked-in provider. **Real e2e test passed**: a note dropped into `Index Inbox/` triggered the workflow, which searched the web (`poolside/laguna-s-2.1:free` via OpenRouter) and wrote a well-structured, correctly-tagged note into `Research/` plus a backlink on the original note — full round trip confirmed on the live server. Sync-back confirmed too: `livesync-cli` correctly pushed every change to MinIO (verified against the bucket directly, since the daemon's console logs stay silent on routine successful syncs — see `docs/TROUBLESHOOTING.md`), and this held with zero Obsidian instances live on any device, confirming Journal Sync's per-device-cursor design doesn't require simultaneous liveness. |
 
 ## Deployment topology
 
@@ -229,21 +229,22 @@ Everything below runs as Docker containers on the existing headless Ubuntu serve
 
 - `minio` (already running)
 - `n8n` (already running — gains a read/write bind mount to the vault-mirror folder)
-- `livesync-cli` (**deployed**, `daemon` mode) — no explicit network needed (bind mounts + outbound
-  HTTPS only); real data now lives at `/data/vault-mirror/{data,vault}` on the host
-- `searxng` (new) — on the project's own `pebble-agent-internal` network only, not reachable by n8n or
-  the host directly
+- `livesync-cli` (new, `daemon` mode) — no explicit network needed (volumes + outbound HTTPS only)
+- `searxng` (new, dedicated to this project — deliberately not the pre-existing `n8n-searxng-1`, see
+  `searxng-service` above) — on the project's own `pebble-agent-internal` network only, not reachable by
+  n8n or the host directly
 - `mcp-obsidian` (new — `obsidian-mcp` + `mcp-proxy`, mounts the vault-mirror folder) — on n8n's existing
-  `n8n_n8n_internal` network (external), so n8n's MCP Client Tool node can reach it
-- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both `n8n_n8n_internal` (reachable by n8n)
-  and `pebble-agent-internal` (reachable by `searxng`)
+  network (external, name set via `N8N_NETWORK_NAME` — see `docker/.env.example`; this project's own
+  deployment calls it `n8n_n8n_internal`, yours will likely be named differently), so n8n's MCP Client
+  Tool node can reach it
+- `mcp-searxng` (new — `MCP-searxng` + `mcp-proxy`) — bridges both n8n's network (reachable by n8n) and
+  `pebble-agent-internal` (reachable by `searxng`)
 
-**Project directory on the server:** `/data/projects/pebble-index-research-agent/repo` (a plain `git
-clone` of this repo, re-`git pull`-able on future updates). The real `docker/.env` (gitignored, MinIO
-creds + SearXNG config, plus `VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH`) lives alongside it there —
-never in this repo. See `docs/SETUP.md` Phase 0.5 for the network/env bootstrap and Phase 1 for the
-vault-mirror deployment.
+**Project directory on the server:** this project's own deployment uses
+`/data/projects/pebble-index-research-agent/repo` (a plain `git clone` of this repo, re-`git
+pull`-able on future updates) — any directory works. The real `docker/.env` (gitignored, MinIO creds +
+SearXNG config) lives alongside it there — never in this repo. See `docs/SETUP.md` Phase 1 for the
+exact bootstrap commands and the reasoning behind the two-network split.
 
-See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current (in-progress) service
-definitions.
+See [`docker/docker-compose.yml`](../docker/docker-compose.yml) for the current service definitions.
 

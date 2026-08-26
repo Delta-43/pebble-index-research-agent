@@ -3,8 +3,11 @@
 Turn a voice note captured on your [Core Devices Pebble Index 01](https://repebble.com/index) ring into an
 auto-researched, auto-tagged note in your Obsidian vault — no manual copy/paste required.
 
-> **Status: 🚧 Work in progress.** This repo is being built and documented in the open. See
-> [Project Status](#project-status) for what's validated vs. still in progress.
+> **Status: fully validated end-to-end on a real deployment, including a real ring recording** —
+> trigger, agent, web research, and sync-back all confirmed working (see [Project Status](#project-status)).
+
+**→ [`docs/SETUP.md`](docs/SETUP.md) has the full step-by-step deployment guide.** This README covers
+the *what* and *why*; `docs/SETUP.md` is what you actually follow to deploy it yourself.
 
 ## How it works
 
@@ -18,13 +21,21 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
                                             │
      n8n Local File Trigger watches the ring-notes subfolder
                                             │
-     n8n AI Agent (cloud LLM) ──uses──► MCP: obsidian-mcp   (read / write / tag notes)
-                                   └──uses──► MCP: mcp-searxng (web research via self-hosted SearXNG)
+     n8n AI Agent (OpenRouter, any model) ──uses──► MCP: obsidian-mcp   (read / write / tag notes)
+                                       └──uses──► MCP: mcp-searxng (web research via self-hosted SearXNG)
                                             │
      New research note (title + tags) written back into the vault mirror
                                             │
      livesync-cli syncs it back through MinIO → appears on your phone/desktop
 ```
+
+> The "ring-notes subfolder" name and n8n's Docker network name are specific to *this* project's own
+> deployment (`Index Inbox/` and `n8n_n8n_internal`, respectively) — yours will likely be named
+> differently. `docs/SETUP.md` shows how to find/set your own for both.
+
+Every research note gets a clear title, 2-5 topical tags, and two fixed tags applied to every note this
+workflow creates — `#interests` and `#questions` — plus a `source` link back to the original voice note.
+Customizable (see [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later)).
 
 ## Why this design
 
@@ -37,6 +48,9 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
   instance via an MCP server, so no third-party search API key is required.
 - **Standard n8n building blocks** — trigger, AI Agent node, and MCP Client Tool nodes; no custom code
   needed inside n8n itself.
+- **No exposed attack surface** — every MCP/service endpoint is internal-only (Docker network isolation,
+  no published host ports); secrets never touch git (`docker/.env` and the generated SearXNG secret are
+  gitignored — `docker/.env.example` documents what's needed instead).
 
 ## Components
 
@@ -51,17 +65,17 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
 
 ## Project status
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open questions, and
-[`docs/SETUP.md`](docs/SETUP.md) for the step-by-step install guide (filled in as each phase is validated).
+Fully validated end-to-end on a real deployment — every piece of the pipeline above, including a real
+ring recording — with no known open issues. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#open-questions--spikes)
+for the detailed validation history if you want the evidence behind that claim.
 
-- [x] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
-- [x] Validate stdio→SSE bridging for both MCP servers
-- [x] Docker base + networks + secrets bootstrap on the server
-- [x] Deploy `livesync-cli` as a persistent, bidirectional vault-mirror service
-- [ ] Deploy SearXNG + both MCP bridges as services
-- [ ] n8n workflow (trigger → agent → tools → save note)
-- [ ] End-to-end test with a real ring recording
-- [ ] Full documentation pass
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [`docs/SETUP.md`](docs/SETUP.md) | Step-by-step deployment guide (Phase 0-5), plus [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later) for changes after your first deploy (rotating credentials, switching models, moving paths, updating the repo, etc.) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The *why* behind every design decision, and the full validation history for each component |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Real errors hit while building this, with exact messages and fixes — check here first if something breaks |
 
 ## Prerequisites
 
@@ -70,7 +84,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and open 
   synced through your own MinIO (or other S3-compatible / CouchDB) instance
 - A headless Linux server with Docker Engine + the Compose plugin (no Docker Desktop)
 - An existing n8n instance (self-hosted) with access to that server
-- An API key for a cloud LLM (OpenAI / Anthropic / Gemini)
+- An [OpenRouter](https://openrouter.ai/) API key — one key, free choice of underlying model
 
 ## License
 

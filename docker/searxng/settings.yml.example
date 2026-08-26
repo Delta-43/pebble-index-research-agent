@@ -1,0 +1,20 @@
+# Copy to settings.yml and generate a real secret_key before first deploy — see docs/SETUP.md Phase 1.
+# Never commit the real settings.yml (it holds a real secret_key); this template is what's tracked.
+#
+# `use_default_settings: true` merges this over SearXNG's built-in defaults, so only the overrides
+# this project actually needs are listed here.
+use_default_settings: true
+
+search:
+  formats:
+    - html
+    - json # required: mcp-searxng queries /search?format=json
+
+server:
+  # MUST be changed before first start — confirmed on home_server (searxng-service) that current
+  # SearXNG (2026.8.22) hard-refuses to boot at all with the literal placeholder still in place
+  # ("server.secret_key is not changed... [ERROR] Unexpected exit from worker-1"), crash-looping
+  # regardless of network exposure. This is not the older "just a CSRF concern" behavior — it's a
+  # startup precondition now. Generate a real one as a one-time step after copying this file:
+  # `sed -i "s/ultrasecretkey/$(openssl rand -hex 32)/" docker/searxng/settings.yml`
+  secret_key: "ultrasecretkey"

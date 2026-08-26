@@ -1,27 +1,30 @@
 # Setup guide
 
-> This guide is being filled in phase-by-phase as each part of the stack is validated on real hardware.
-> Checked items are confirmed working; unchecked items are planned/in progress.
+A step-by-step deployment guide, validated end-to-end on a real headless Ubuntu server. For the *why*
+behind each decision, see [`ARCHITECTURE.md`](ARCHITECTURE.md); for exact error messages and fixes if
+something goes wrong, see [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md) — several steps below hit real,
+non-obvious failure modes during development, called out inline with a link to the full details.
 
-## Prerequisites checklist
+Commands below use placeholder paths/names in `<angle brackets>` — replace them with your own. Where
+this project's own real deployment used a specific value (e.g. a folder name, a network name), that's
+called out explicitly so you know it's an example, not a requirement.
 
-- [ ] Core Devices Pebble Index 01 ring, paired with the [Pebble mobile app](https://github.com/coredevices/mobileapp)
-- [x] Obsidian vault with the [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) plugin
-      installed and syncing through your own MinIO (S3-compatible) bucket
-- [x] A headless Ubuntu server reachable via SSH, with Docker Engine + Compose plugin installed
-      (see [Phase 0](#phase-0--docker-engine-on-a-headless-server))
-- [ ] An existing n8n instance reachable from that server
-- [ ] A cloud LLM API key (OpenAI, Anthropic, or Gemini)
+## Prerequisites
 
-## Phase 0 — Docker Engine on a headless server
+- A Core Devices Pebble Index 01 ring, paired with the [Pebble mobile app](https://github.com/coredevices/mobileapp)
+- An Obsidian vault with the [Self-hosted LiveSync](https://github.com/vrtmrz/obsidian-livesync) plugin
+  installed and syncing through your own MinIO (or other S3-compatible) bucket
+- A headless Ubuntu server reachable via SSH, with Docker Engine + Compose plugin (see Phase 0 if not)
+- An existing n8n instance (self-hosted), reachable from that server
+- An [OpenRouter](https://openrouter.ai/) API key (one key, free choice of underlying model — see Phase 4)
 
-No Docker Desktop is required. On Ubuntu:
+## Phase 0 — Docker Engine on the server
+
+Skip if Docker is already installed. No Docker Desktop needed — plain Docker Engine + Compose plugin:
 
 ```bash
-# remove old/conflicting packages
 sudo apt-get remove docker docker-engine docker.io containerd runc
 
-# prerequisites + Docker's official repo
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl
 sudo install -m 0755 -d /etc/apt/keyrings
@@ -32,172 +35,267 @@ echo \
   $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-# install engine + compose plugin
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# enable + run as non-root
 sudo systemctl enable --now docker
 sudo usermod -aG docker $USER && newgrp docker
 
-# sanity check
-docker run --rm hello-world
+docker run --rm hello-world   # sanity check
 ```
 
-## Phase 0.5 — Project directory, shared network, and secrets (`server-base-setup`)
-
-**Validated** (`server-base-setup`, 2026-08-25) against `home_server`. Docker Engine 29.7.2 +
-Compose plugin v5.5.0 confirmed already installed (matches Phase 0). Steps:
+## Phase 1 — Clone the repo and configure secrets
 
 ```bash
-# 1. Clone this repo onto the server as the deployment checkout (re-`git pull` here on future updates)
-mkdir -p /data/projects/pebble-index-research-agent
-git clone https://github.com/Delta-43/pebble-index-research-agent.git \
-  /data/projects/pebble-index-research-agent/repo
+# 1. Clone this repo wherever you want it deployed from
+git clone https://github.com/Delta-43/pebble-index-research-agent.git
+cd pebble-index-research-agent
 
-# 2. Create the project's own internal network (isolates searxng — see below)
+# 2. Create this project's own internal network (isolates searxng — see ARCHITECTURE.md)
 docker network create pebble-agent-internal
 
-# 3. Populate the real .env (gitignored, lives only on the server) from docker/.env.example
-cp /data/projects/pebble-index-research-agent/repo/docker/.env.example \
-   /data/projects/pebble-index-research-agent/repo/docker/.env
-chmod 600 /data/projects/pebble-index-research-agent/repo/docker/.env
-# ...then fill in the real MinIO endpoint/bucket/accessKey/secretKey (available in the already-
-# bootstrapped livesync-settings.json from Phase 1 — see docs/ARCHITECTURE.md) and SearXNG config.
-# LLM_API_KEY is intentionally left blank here: it's configured directly as an n8n credential
-# (n8n-workflow-agent), no container in this compose stack needs it. LIVESYNC_PASSPHRASE is also left
-# blank: the vault's E2EE passphrase is never stored in plaintext (`encryptedPassphrase` stays
-# encrypted at rest), and vault-mirror-service reuses the already-bootstrapped settings.json rather
-# than re-deriving credentials from an env var.
+# 3. Copy and fill in the real .env — never commit this file
+cp docker/.env.example docker/.env
+chmod 600 docker/.env
 ```
 
-**Networking decision:** `docker-compose.yml` does **not** create one flat network for everything.
-Instead:
-- `n8n_n8n_internal` — n8n's own *existing* Docker network, declared `external: true` (this project
-  doesn't own n8n's compose stack). `mcp-obsidian` and `mcp-searxng` join it so n8n's MCP Client Tool
-  node can reach their SSE endpoints — this exact reachability path was already validated end-to-end in
-  `spike-mcp-bridge` from the real, running `n8n` container.
-- `pebble-agent-internal` — a new network dedicated to this project. `searxng` only joins this one, so
-  it stays reachable exclusively by `mcp-searxng` (not by n8n or the host directly), matching the
-  original "network-isolated" design goal for `searxng-service`. `mcp-searxng` bridges both networks.
-- `livesync-cli` needs no explicit network — it only needs volume access and outbound HTTPS egress to
-  MinIO, both of which work on Docker's default bridge.
+Now edit `docker/.env`:
 
-Remaining for later todos: `searxng-service` still needs to decide reuse-vs-isolate against the
-already-running `n8n-searxng-1` (see `docs/ARCHITECTURE.md`).
+- **`LIVESYNC_S3_*`** — your MinIO/S3 endpoint, bucket, access key, secret key. Get these from the
+  Self-hosted LiveSync plugin's own settings (Obsidian → Settings → Self-hosted LiveSync → Sync
+  Settings), or from wherever you originally configured your MinIO/S3 remote. `LIVESYNC_PASSPHRASE` can
+  stay blank — the vault's E2EE passphrase isn't needed here (see Phase 2).
+- **`LLM_API_KEY`** — leave blank. The OpenRouter key goes into n8n directly as a credential (Phase 4),
+  not into this compose stack.
+- **`SEARXNG_URL`** — leave as the default (`http://searxng:8080`) unless you change the `searxng`
+  service name in `docker-compose.yml`.
+- **`VAULT_MIRROR_DATA_PATH`** / **`VAULT_MIRROR_PATH`** — pick two absolute host directories (e.g.
+  `/data/vault-mirror/data` and `/data/vault-mirror/vault`). They'll be created if they don't exist.
+- **`N8N_NETWORK_NAME`** — the Docker network your *existing* n8n container is already on. Find it with:
+  ```bash
+  docker inspect <your-n8n-container-name> --format '{{json .NetworkSettings.Networks}}'
+  ```
+  (or `docker network ls` and match by inspecting candidates). Every n8n install names this differently
+  depending on its own compose project name — this project's own deployment happens to use
+  `n8n_n8n_internal`, but don't assume that's yours.
 
-## Phase 1 — Vault mirror (`livesync-cli`)
-
-**Validated** against a real MinIO/S3 remote using Journal Sync (see `docs/ARCHITECTURE.md` and
-`docs/TROUBLESHOOTING.md` for full details/gotchas). Summary of the working bootstrap sequence:
+Then generate the SearXNG secret (a checked-in placeholder won't work — see
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#searxng-deployment-searxng-service) for why):
 
 ```bash
-# 1. Build the CLI image (once)
-git clone --depth 1 https://github.com/vrtmrz/obsidian-livesync.git
-cd obsidian-livesync
-docker build -f src/apps/cli/Dockerfile -t livesync-cli .
+cp docker/searxng/settings.yml.example docker/searxng/settings.yml
+sed -i "s/ultrasecretkey/$(openssl rand -hex 32)/" docker/searxng/settings.yml
+```
 
-# 2. Create a fresh settings file
-docker run --rm -v <data-dir>:/data livesync-cli init-settings /data/livesync-settings.json
+## Phase 2 — Bootstrap the vault mirror
 
-# 3. Apply the Setup URI exported from Obsidian (Settings -> Sync Settings -> copy/QR "Setup URI")
+`livesync-cli` needs a one-time, interactive bootstrap before it can run unattended — it needs your
+vault's E2EE passphrase once, which is why this can't be automated into `docker-compose.yml`.
+
+```bash
+# Build the CLI image (also happens automatically on first `docker compose up`, but building it once
+# here lets you run the one-off bootstrap commands below directly)
+docker build -f src/apps/cli/Dockerfile -t livesync-cli https://github.com/vrtmrz/obsidian-livesync.git
+
+DATA_DIR=<same as VAULT_MIRROR_DATA_PATH in docker/.env>
+VAULT_DIR=<same as VAULT_MIRROR_PATH in docker/.env>
+mkdir -p "$DATA_DIR" "$VAULT_DIR"
+
+# 1. Create a fresh settings file
+docker run --rm -v "$DATA_DIR":/data livesync-cli init-settings /data/livesync-settings.json
+
+# 2. Apply the Setup URI exported from Obsidian (Settings → Self-hosted LiveSync → Sync Settings →
+# copy/QR "Setup URI"). Needs -i (interactive) since it prompts for the URI's passphrase on stdin.
 printf '%s\n' "$SETUP_URI_PASSCODE" | \
-  docker run -i --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+  docker run -i --rm -v "$DATA_DIR":/data -v "$VAULT_DIR":/vault livesync-cli \
     --settings /data/livesync-settings.json setup "$SETUP_URI"
 
-# 4. One-time device acceptance (only needed the first time a new device connects)
-docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+# 3. One-time device acceptance — only needed the first time this specific device (this CLI install)
+# connects. <remote-id> is the key under `remoteConfigurations` in the settings.json step 2 wrote.
+docker run --rm -v "$DATA_DIR":/data -v "$VAULT_DIR":/vault livesync-cli \
   --settings /data/livesync-settings.json --vault /vault unlock-remote <remote-id>
 
-# 5. Pull once and materialise real files, then verify
-docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+# 4. Pull once and materialise real files
+docker run --rm -v "$DATA_DIR":/data -v "$VAULT_DIR":/vault livesync-cli \
   --settings /data/livesync-settings.json --vault /vault sync
-docker run --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
+docker run --rm -v "$DATA_DIR":/data -v "$VAULT_DIR":/vault livesync-cli \
   --settings /data/livesync-settings.json --vault /vault mirror
 
-# 6. Run continuously (this is what the docker-compose `livesync-cli` service does)
-docker run -d --rm -v <data-dir>:/data -v <vault-dir>:/vault livesync-cli \
-  --settings /data/livesync-settings.json --vault /vault daemon
+# 5. Journal Sync doesn't replicate the .obsidian/ config folder, but obsidian-mcp (Phase 3) refuses a
+# vault without one — create an empty one once:
+docker run --rm -v "$VAULT_DIR":/vault alpine mkdir -p /vault/.obsidian
 ```
 
-Remaining for `vault-mirror-service`: wire the above into the standing compose service (persist
-`settings.json` in the `livesync_db` volume, run steps 2-4 as a one-time bootstrap rather than on every
-container start), and resolve the root-owned-files permission question noted in
-`docs/TROUBLESHOOTING.md`.
+If step 2 instead fails with `The remote database is locked and this device is not yet accepted`, that
+*is* step 3 — run it and retry. See
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#livesync-cli--vault-mirror-spike-livesync-s3) if anything else
+goes wrong here.
 
-### Deploying as a persistent service (`vault-mirror-service`)
-
-**Validated** (`vault-mirror-service`, 2026-08-25) on `home_server`. The one-time bootstrap above
-(steps 1-4) only needs to happen once per device — this project's persistent deployment reuses the
-`settings.json` it already produced, rather than re-running `setup`/`unlock-remote`:
+## Phase 3 — Deploy the stack
 
 ```bash
-# 1. Create the persistent host directories (bind-mounted, not anonymous Docker volumes, so
-#    mcp-obsidian and later n8n can mount the exact same path)
-mkdir -p /data/vault-mirror/data /data/vault-mirror/vault/.obsidian
-cp <bootstrapped-settings.json> /data/vault-mirror/data/livesync-settings.json
-
-# 2. Point docker/.env at them (see docker/.env.example)
-#   VAULT_MIRROR_DATA_PATH=/data/vault-mirror/data
-#   VAULT_MIRROR_PATH=/data/vault-mirror/vault
-
-# 3. Start it
-cd /data/projects/pebble-index-research-agent/repo/docker
-docker compose up -d livesync-cli
-docker compose logs livesync-cli   # confirm "[Daemon] LiveSync active"
+cd docker
+docker compose up -d --build
 ```
 
-The `.obsidian/` directory must exist (empty is fine) before first start — Journal Sync doesn't
-replicate it, and `obsidian-mcp` (see Phase 2) refuses a vault without one.
-
-**Confirmed real bidirectional sync** on the deployed service: a file created directly in the vault
-bind mount was picked up by the `chokidar` watcher and pushed to MinIO within seconds; deleting it
-locally correctly propagated as a remote deletion on the next scan. See `docs/ARCHITECTURE.md` and
-`docs/TROUBLESHOOTING.md` for the exact log lines and the root-ownership permission gotcha (subdirectories
-the container creates are root-owned; the vault's top-level directory remains writable by whichever
-host user created it).
-
-## Phase 2 — MCP servers
-
-**Validated** (`spike-mcp-bridge`) that `sparfenyuk/mcp-proxy` can bridge both stdio MCP servers to SSE
-endpoints n8n's MCP Client Tool node can call — see `docs/ARCHITECTURE.md` and
-`docs/TROUBLESHOOTING.md` for full findings/gotchas (in particular: **do not** `npx -y mcp-proxy`, that
-resolves to an unrelated npm package).
+This starts `livesync-cli` (in continuous `daemon` mode — picks up from the one-shot bootstrap above),
+`searxng`, `mcp-obsidian`, and `mcp-searxng`. Verify each:
 
 ```bash
-# --- obsidian-mcp bridge ---
-# Vault dir must already contain an (empty is fine) .obsidian/ directory — Journal Sync doesn't
-# replicate it, so create it once:
-docker run --rm -v <vault-dir>:/vault alpine mkdir -p /vault/.obsidian
+# searxng: real search results, JSON format. No host port is published (internal-only by design), so
+# run the check from a throwaway container on the same network:
+docker run --rm --network pebble-agent-internal curlimages/curl:latest \
+  -s 'http://searxng:8080/search?q=test&format=json'
 
-# Base image needs both Node (for obsidian-mcp) and Python (for the real mcp-proxy):
-docker run -d --name mcp-obsidian -p 8801:8801 -v <vault-dir>:/vault node:22-slim sh -c \
-  "apt-get update -qq && apt-get install -qq -y python3 python3-pip > /dev/null && \
-   pip install --quiet --break-system-packages 'mcp<2' mcp-proxy && \
-   exec mcp-proxy --port=8801 --host=0.0.0.0 --pass-environment -- \
-     npx -y obsidian-mcp@2 serve --vault notes=/vault"
-
-# --- mcp-searxng bridge ---
-# Install mcp-searxng from source (PyPI 0.1.0 is stale/incompatible with current SearXNG's JSON schema):
-docker run -d --name mcp-searxng -p 8802:8802 -e SEARXNG_URL=http://searxng:8080 python:3.12-slim sh -c \
-  "apt-get update -qq && apt-get install -qq -y git > /dev/null && \
-   pip install --quiet 'mcp<2' mcp-proxy 'git+https://github.com/SecretiveShell/MCP-searxng.git' && \
-   exec mcp-proxy --port=8802 --host=0.0.0.0 --pass-environment -- mcp-searxng"
+# mcp-obsidian / mcp-searxng: SSE handshake, reachable from n8n specifically
+docker exec <your-n8n-container-name> wget -qO- --timeout=3 http://mcp-obsidian:8801/sse
+docker exec <your-n8n-container-name> wget -qO- --timeout=3 http://mcp-searxng:8802/sse
 ```
 
-Both expose an SSE endpoint at `http://<container-name>:<port>/sse` on whatever Docker network they
-share with n8n and (for `mcp-searxng`) SearXNG. Point n8n's **MCP Client Tool** node at that URL.
+Each should return `event: endpoint` / `data: /messages/?session_id=...` and then hang (that's correct —
+it's a long-lived SSE stream; `Ctrl+C` or let the command time out).
 
-Remaining for `mcp-obsidian-service` / `mcp-searxng-service`: bake the above `apt-get`/`pip install`
-steps into real committed Dockerfiles (see `docker/mcp-obsidian/Dockerfile` and
-`docker/mcp-searxng/Dockerfile`) instead of running them ad hoc at container start every time, and
-decide whether to reuse the already-running `n8n-searxng-1` SearXNG instance (already has JSON format
-enabled) or stand up a fully separate one (`searxng-service`).
+## Phase 4 — Wire up n8n
 
-## Phase 3 — n8n workflow
+**Step 1 — mount the vault mirror into n8n itself, and clear two default security restrictions.** The
+Local File Trigger node runs inside n8n's own container, so it needs read access to the same host path
+`livesync-cli` writes to. Edit n8n's own `compose.yml` (wherever your n8n stack lives — **not** this
+repo) to add a bind mount and two environment variables. Recent n8n versions exclude
+filesystem-touching nodes by default (sensible for an internet-facing instance), and this workflow
+needs two of them re-enabled:
 
-_Pending — workflow JSON will be exported to `n8n/workflows/` once built._
+```yaml
+    environment:
+      # ...your existing vars...
+      # Re-enable just the Local File Trigger node; leave the more dangerous executeCommand blocked.
+      NODES_EXCLUDE: '["n8n-nodes-base.executeCommand"]'
+      # Default only allows file-system nodes to touch ~/.n8n-files. Add the vault mirror mount path.
+      N8N_RESTRICT_FILE_ACCESS_TO: '/vault-mirror;~/.n8n-files'
+    volumes:
+      - <your VAULT_MIRROR_PATH>:/vault-mirror:ro
+```
 
-## Phase 4 — End-to-end test
+Mount it at exactly `/vault-mirror` — that's the path baked into the workflow JSON you'll import next.
+Then apply it:
 
-_Pending._
+```bash
+docker compose up -d <your-n8n-service-name>   # or however you normally restart your n8n deployment
+```
+
+This briefly restarts n8n (a few seconds of downtime; `healthz` recovers on its own). **Both env vars
+are required — missing either one makes the trigger fail silently**: the workflow shows
+"Published"/"Active" in the UI with no error, but the trigger either never registers or throws `Access
+to the file is not allowed.` on every run. See
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#n8n-workflow-build-n8n-workflow-trigger-n8n-workflow-agent)
+for exactly what each failure looks like if you hit it anyway.
+
+**Step 2 — import the workflow:**
+
+```bash
+docker cp n8n/workflows/pebble-index-research-agent.json <your-n8n-container-name>:/tmp/wf.json
+docker exec <your-n8n-container-name> n8n import:workflow --input=/tmp/wf.json
+```
+
+⚠️ If you ever re-run this later (e.g. after `git pull`-ing an updated version of this workflow), it
+will silently overwrite the credential/model you set in Step 4 below and deactivate the workflow — see
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#n8n-workflow-build-n8n-workflow-trigger-n8n-workflow-agent).
+
+**Step 3 — check the ring-notes folder name matches your vault.** This project's own vault saves
+transcribed notes to a folder called `Index Inbox/` — yours may be named differently (check your vault,
+or the Pebble app's settings). If so, open the imported workflow in the n8n editor, click the **Watch
+Index Inbox** node, and change its `Folder to Watch` field from `/vault-mirror/Index Inbox` to
+`/vault-mirror/<your folder name>`. Nothing else needs to change — the rest of the workflow reads the
+folder name through automatically.
+
+**Step 4 — add an OpenRouter credential.** The `OpenRouter Chat Model` node's credential ships
+intentionally unset. Click that node in the editor and attach (or create) an OpenRouter credential —
+just an API key from [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys). To choose a
+model, edit that same node's **Model** field — it's a plain string, e.g. `openai/gpt-5-mini`,
+`anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`, or any other slug from
+[openrouter.ai/models](https://openrouter.ai/models) (including free-tier models) — no node graph
+changes needed to switch models later, just edit that field.
+
+**Step 5 — activate the workflow**, then restart n8n once more:
+
+```bash
+docker compose up -d <your-n8n-service-name>   # or however you normally restart your n8n deployment
+```
+
+n8n only builds its list of which triggers to actually start listening for **once, at process boot** —
+activating a workflow while n8n is already running updates the database immediately, but the running
+process won't actually start watching until it restarts.
+
+## Phase 5 — Test it
+
+Drop a `.md` file into your ring-notes folder (or record a real note on the ring). The folder is
+root-owned (the official `livesync-cli` image doesn't drop privileges — see
+[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#livesync-cli--vault-mirror-spike-livesync-s3)), so write it
+via a throwaway container rather than a plain shell redirect, which will hit `Permission denied` for
+most users:
+
+```bash
+printf -- '---\ntags: [index, index_note]\n---\n\nWhat is the best way to brew pour-over coffee at home?\n' | \
+  docker run --rm -i -v <your VAULT_MIRROR_PATH>:/vault alpine sh -c \
+    "cat > '/vault/<your folder name>/test-note.md'"
+```
+
+Within a few seconds, check:
+
+- **n8n's Executions list** — a new run of "Pebble Index → Research Note" should appear.
+- **Your vault's `Research/` folder** — a new, titled, tagged note with a `source` link back to the
+  original.
+- **Your phone/desktop Obsidian** — the new note should sync down automatically via
+  Self-hosted LiveSync, next time it connects. This works even if no Obsidian instance was open on any
+  device while the note was created — see
+  [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#livesync-cli--vault-mirror-spike-livesync-s3) for how to
+  verify sync directly against your MinIO bucket if you want independent confirmation before waiting on
+  your phone.
+
+## Reconfiguring things later
+
+Everything below is a one-off edit + restart, not a redeployment — you don't need to repeat Phases 0-5.
+
+**Rotate/update MinIO credentials** — edit `LIVESYNC_S3_*` in `docker/.env`, then
+`docker compose up -d livesync-cli` (from `docker/`). Note the vault's own E2EE passphrase is separate
+from these S3 credentials and isn't stored in `.env` at all (see Phase 2) — rotating your MinIO access
+key doesn't touch it.
+
+**Switch the LLM model or provider** — open the workflow in the n8n editor, click the
+`OpenRouter Chat Model` node, edit the **Model** field (any OpenRouter slug — see Phase 4 step 4).
+Whether this needs a restart to take effect wasn't specifically verified (only trigger-registration
+behavior was confirmed to require one) — restart to be safe:
+`docker compose up -d <your-n8n-service-name>`. It's fast (a few seconds) and always safe.
+
+**Change the ring-notes folder name** (e.g. your Pebble app config changes, or you're adapting this
+for a different note-taking source) — edit the **Watch Index Inbox** node's `Folder to Watch` field in
+the n8n editor (see Phase 4 step 3), then restart n8n. This one likely *does* need the restart even more
+than the model change above: the trigger's filesystem watcher is set up once when the trigger activates,
+so an in-place path edit probably won't move an already-running watcher without a
+deactivate/reactivate-equivalent cycle — restarting is the one path confirmed to work.
+
+**Customize the tags every note gets, or the research note's structure/instructions** — edit the
+`Research Agent` node's **System Message** in the n8n editor (or `n8n/workflows/pebble-index-research-agent.json`
+directly, then re-import — see the re-import warning in `docs/TROUBLESHOOTING.md` before doing that on a
+live, customized workflow). By default every note gets `interests` and `questions` tags in addition to
+2-5 topical ones (step 5 of the prompt) — change or remove that instruction if you want different
+defaults.
+
+**Move the vault-mirror host paths** — edit `VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH` in
+`docker/.env`, move the actual directories on disk to match, then `docker compose up -d` (from
+`docker/`) to pick up the new mounts. Remember n8n's own `compose.yml` also bind-mounts
+`VAULT_MIRROR_PATH` (Phase 4 step 1) — update that mount too, and restart n8n.
+
+**Regenerate the SearXNG secret** (e.g. you suspect it leaked) —
+`sed -i "s/<old-value>/$(openssl rand -hex 32)/" docker/searxng/settings.yml`, then
+`docker compose up -d searxng`.
+
+**n8n's Docker network changed name** (e.g. you recreated its compose project) — update
+`N8N_NETWORK_NAME` in `docker/.env`, then `docker compose up -d` (from `docker/`) to reattach
+`mcp-obsidian`/`mcp-searxng`.
+
+**Pulling an updated version of this repo** — `git pull`, then re-run any changed Dockerfile/compose
+steps (`docker compose up -d --build`, from `docker/`). If `n8n/workflows/pebble-index-research-agent.json`
+changed, **don't blindly re-import it** if you've customized your live workflow (model, credential,
+system prompt) — re-importing silently overwrites all of that with whatever's in the file. See
+`docs/TROUBLESHOOTING.md` for the safer surgical-edit approach, or just manually re-apply the specific
+change from the diff.

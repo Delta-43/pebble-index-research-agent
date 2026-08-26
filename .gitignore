@@ -1,6 +1,7 @@
 # secrets
 .env
 docker/.env
+docker/searxng/settings.yml
 *.pem
 *.key
 

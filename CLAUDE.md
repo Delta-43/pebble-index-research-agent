@@ -1,6 +1,11 @@
 # CLAUDE.md
 
-Guidance for Claude Code (or any AI coding agent) picking up work on this repository.
+Guidance for Claude Code (or any AI coding agent) picking up work on this repository. This file
+documents *this specific reference deployment* (its real hostnames, network names, folder names,
+server paths) for continuity across sessions — it is not the public-facing guide. Someone else
+following `README.md`/`docs/SETUP.md` to deploy their own instance will have different specifics
+throughout; don't treat values here (e.g. `home_server`, `n8n_n8n_internal`, `Index Inbox`) as
+requirements for anyone else's deployment.
 
 ## What this project is
 
@@ -13,103 +18,79 @@ Docker Desktop, no paid Obsidian Sync, no third-party search API key required.
 Read `README.md` first, then `docs/ARCHITECTURE.md` for the full design rationale — don't re-derive the
 architecture from scratch, it's already been researched and decided (see "Key decisions" below).
 
-## Current state (as of this writing, 2026-08-25)
+## Current state (as of this writing)
 
-**4 of 12 phases are done and merged to `main` (PRs #1, #2, #3). Real infrastructure is running on
-`home_server` right now.** Don't re-derive or re-validate what's already confirmed below — build on it.
+**The full pipeline is working and validated against a real ring recording on the real server**
+(`home_server`, hostname `delta-server`): the full `docker/docker-compose.yml` stack (`livesync-cli`,
+`searxng`, `mcp-obsidian`, `mcp-searxng`) is deployed, and the n8n workflow
+(`n8n/workflows/pebble-index-research-agent.json`, model backend on **OpenRouter** per user preference)
+is imported, activated, and confirmed working end-to-end with a real recorded note — trigger fired,
+agent researched and wrote a correctly-tagged note with a backlink, `livesync-cli` pushed it to MinIO
+(confirmed by checking the bucket directly, not the daemon's — misleadingly silent — console logs).
+Also confirmed: sync works with **zero Obsidian instances live on any device** — Journal Sync is an
+async, per-device-cursor log over object storage, not live replication.
 
-Done:
+Two real bugs surfaced and fixed against real usage (not caught by any infra-level test — both are
+documented in full in `docs/TROUBLESHOOTING.md`):
+- Two of n8n's own default security restrictions (`NODES_EXCLUDE`, `N8N_RESTRICT_FILE_ACCESS_TO`)
+  silently killed the trigger with no UI error — required overriding both on n8n's own shared
+  `compose.yml`.
+- The agent itself would sometimes make an unnecessary extra tool call that overwrote its own
+  just-created research note with a stray fragment, while n8n still reported `"status": "success"` —
+  an agent-*behavior* bug invisible to any infra check, only caught by reading the actual execution
+  trace (`get_workflow_execution` via n8n's own MCP server, `includeData: true`) and the actual note
+  content. Fixed with an explicit "stop after step 7, no further tool calls" instruction in the system
+  prompt; re-tested against the same real note and confirmed clean afterward.
 
-1. ✅ `spike-livesync-s3` — `livesync-cli` validated against the real MinIO/S3 remote. Confirmed the
-   remote uses LiveSync's E2EE **Journal Sync** mode (not CouchDB replication, not plain files — this
-   *refines* the original architecture assumption, see `docs/ARCHITECTURE.md`).
-2. ✅ `spike-mcp-bridge` — `sparfenyuk/mcp-proxy` validated bridging both `obsidian-mcp` and
-   `mcp-searxng` (stdio) to SSE, reachable from the real running `n8n` container. Several sharp edges
-   found and documented (see "Known gotchas" below) — read `docs/TROUBLESHOOTING.md` before touching
-   these services.
-3. ✅ `server-base-setup` — Docker Engine 29.7.2 + Compose v5.5.0 confirmed on `home_server`. Project
-   checked out at `/data/projects/pebble-index-research-agent/repo` on the server. Real `docker/.env`
-   exists **on the server only** (gitignored, never committed) with MinIO creds + vault-mirror paths.
-   Two Docker networks wired into `docker-compose.yml`: `n8n_n8n_internal` (external, shared with the
-   existing n8n container) and `pebble-agent-internal` (project-owned, isolates `searxng`).
-4. ✅ `vault-mirror-service` — `livesync-cli` is **actually running right now** on `home_server` as a
-   persistent `daemon`-mode container, bind-mounted (not anonymous volumes) at `${VAULT_MIRROR_DATA_PATH}`
-   / `${VAULT_MIRROR_PATH}` from `docker/.env`, confirmed live bidirectional sync (local create/delete
-   ↔ remote, ~2s latency). Verify with `ssh home_server 'cd /data/projects/pebble-index-research-agent/repo/docker && docker compose ps'`.
+Sessions now run directly on `home_server` (no `ssh home_server` hop needed) — see
+`docs/ARCHITECTURE.md`/`docs/SETUP.md`/`docs/TROUBLESHOOTING.md` for the real findings behind every
+service. When building/editing n8n workflow JSON, don't guess node schemas — read them from
+`.../dist/node-definitions/nodes/**/v<N>.ts` inside the running `n8n` container (see
+`docs/TROUBLESHOOTING.md`); don't assume a published/active workflow's trigger is actually running — a
+restart is needed after every publish/activate while n8n is already running; and prefer n8n's own MCP
+server's `update_workflow` (`setNodeParameter`) for single-field edits to a live, customized workflow
+over re-importing the whole file, which silently clobbers credentials/model/active-state.
 
-Not yet done, in dependency order (query the repo's todo list for exact status/descriptions — this
-session used a SQL-backed todo/todo_deps table that may or may not be replicated where you're working;
-if not, recreate it from this list):
+Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
+for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 
-5. `searxng-service` — depends on `server-base-setup` (done). **Ready to start.** `docker-compose.yml`
-   already has a `searxng` service defined and building cleanly, just not deployed yet. NOTE: an
-   existing `n8n-searxng-1` container is *already running* on the server (part of n8n's own stack) with
-   JSON format already enabled, reachable only via the internal n8n network — decide whether to reuse
-   that instead of standing up a second one before deploying.
-6. `mcp-obsidian-service` — depends on `vault-mirror-service` (done). **Ready to start.**
-   `docker/mcp-obsidian/Dockerfile` already exists and was smoke-tested during the spike, but isn't
-   deployed as a persistent service yet.
-7. `n8n-workflow-trigger` — depends on `vault-mirror-service` (done). **Ready to start.**
-8. `mcp-searxng-service` — depends on `searxng-service` (not done). Blocked until #5.
-9. `n8n-workflow-agent` — depends on `mcp-obsidian-service`, `mcp-searxng-service`, `n8n-workflow-trigger`.
-   Blocked until #6, #7, #8.
-10. `e2e-testing` — depends on `n8n-workflow-agent`.
-11. `docs-repo` — fill in remaining pending doc sections once everything works end-to-end.
-12. `publish-github` — repo already exists and is public (`Delta-43/pebble-index-research-agent`); this
-    step is about final polish/release (screenshots, demo), not initial creation.
-
-## Known gotchas (read before touching MCP services)
-
-- `npx -y mcp-proxy` resolves to the **wrong package** (`punkpeye/mcp-proxy`, npm). The real
-  `sparfenyuk/mcp-proxy` is a **Python** package: `pip install mcp-proxy`.
-- `mcp-proxy` 0.12.0 requires `mcp<2` pinned — breaks silently against `mcp` 2.x despite a loose
-  constraint.
-- `mcp-proxy` needs `--pass-environment` explicitly to forward env vars (e.g. `SEARXNG_URL`) into the
-  wrapped stdio child process — not automatic.
-- `SecretiveShell/MCP-searxng`'s **PyPI** package (0.1.0) is stale and incompatible with current
-  SearXNG's JSON schema (`number_of_results` field mismatch) — install from **git source** instead.
-- `obsidian-mcp@2` requires a pre-existing `.obsidian/` directory in the vault path. Journal Sync does
-  not replicate this directory — create it once: `mkdir -p "$VAULT_MIRROR_PATH/.obsidian"`.
-- The official `livesync-cli` Docker image writes files as **root** — anything else reading/writing the
-  vault mirror needs to tolerate root-owned files/subdirectories.
-- Full details and exact commands for all of the above: `docs/TROUBLESHOOTING.md`.
-
-## Security note
-
-During `server-base-setup`, a debugging command's redaction regex failed once and printed real MinIO
-access key + secret key into that session's transcript (never committed, never shared externally, but
-visible in a conversation log). The user was notified and chose to rotate those credentials manually
-themselves. **If you are continuing this project and the MinIO credentials in `docker/.env` on
-`home_server` no longer work, that's expected — check with the user for the rotated credentials rather
-than assuming the ones referenced in old session transcripts still work.**
+1. `spike-livesync-s3` — ✅ done
+2. `spike-mcp-bridge` — ✅ done
+3. `server-base-setup` — ✅ done
+4. `vault-mirror-service`, `searxng-service` (parallel) — ✅ both done (searxng-service deliberately did
+   **not** reuse the pre-existing `n8n-searxng-1`; see `docs/ARCHITECTURE.md`)
+5. `mcp-obsidian-service`, `mcp-searxng-service` (parallel) — ✅ both done, deployed as real standing
+   compose services (not just spike scratch containers) and re-validated end-to-end
+6. `n8n-workflow-trigger`, then `n8n-workflow-agent` — ✅ both done, built, imported, activated
+7. `e2e-testing` — ✅ done: agent half, sync-back half (both confirmed via manually-dropped notes), and
+   a real ring recording, all confirmed on the live server, see `docs/TROUBLESHOOTING.md` — this last
+   round surfaced and fixed a real agent-behavior bug (the agent overwriting its own good work with an
+   unnecessary extra tool call)
+8. `docs-repo` — ✅ done: repo generalized for other users (parameterized n8n network name, called out
+   vault-specific values, `docs/SETUP.md` rewritten as a linear guide)
+9. `publish-github` — **next up** (repo already exists and is public:
+   `Delta-43/pebble-index-research-agent`; remaining work is merging the open PR and any final
+   release polish, not initial creation)
 
 ## Environment / access notes
 
-- The target deployment server is a headless Ubuntu machine reachable over SSH as `home_server`
-  (an SSH config alias — do not ask the user for an IP; just `ssh home_server`).
+- The target deployment server is a headless Ubuntu machine, historically reachable over SSH as
+  `home_server` (an SSH config alias). Some agent sessions run directly on that server already (check
+  `hostname` — `delta-server` means you're on it); in that case skip the `ssh home_server` hop entirely
+  and run `docker`/`git` commands directly.
 - MinIO is already running on that same server, backing the user's Obsidian **Self-hosted LiveSync**
-  plugin (Journal Sync mode), bucket `obsidian-bucket`.
-- n8n is already running and reachable from that server, with its own Docker network
-  `n8n_n8n_internal` (external to this project — joined by `mcp-obsidian`/`mcp-searxng`, not owned by
-  this repo) and its own existing SearXNG sidecar (`n8n-searxng-1`, see `searxng-service` note above).
-- Docker on that server is plain `docker-ce` + `docker-compose-plugin` (29.7.2 / v5.5.0 confirmed) —
-  **no Docker Desktop**, and nothing in this project should assume it's available.
-- This project's deployment checkout lives at `/data/projects/pebble-index-research-agent/repo` on
-  `home_server`; the compose project is `/data/projects/pebble-index-research-agent/repo/docker`. The
-  real `docker/.env` there is gitignored and was bootstrapped from the already-paired
-  `livesync-settings.json` — don't hand-type credentials, and don't assume the values referenced in
-  old session transcripts still work (see "Security note" above).
+  plugin.
+- n8n is already running and reachable from that server.
+- Docker on that server should be plain `docker-ce` + `docker-compose-plugin` — **no Docker Desktop**,
+  and nothing in this project should assume it's available.
 
 ## Key decisions already made (don't re-litigate without new evidence)
 
 - **Vault mirror mechanism**: `vrtmrz/obsidian-livesync`'s official CLI (`src/apps/cli`, aka
   `livesync-cli`), run in `daemon` mode, mirrors the vault to plain `.md` files on disk against the same
-  MinIO/S3 remote already used by the phone. **Confirmed and running**: the remote uses LiveSync's E2EE
-  **Journal Sync** mode specifically (`.jsonl.gz` chunks + milestone doc in `obsidian-bucket`) — not
-  CouchDB replication, and not raw files. This was chosen over running headless Obsidian (Electron) and
-  over parsing the MinIO bucket directly (LiveSync doesn't store plain files there — see
-  `docs/ARCHITECTURE.md`). Bootstrap uses the plugin's own **Setup URI** (`setup` command) rather than
-  hand-typed S3 credentials.
+  MinIO/S3 remote already used by the phone. This was chosen over running headless Obsidian (Electron)
+  and over parsing the MinIO bucket directly (LiveSync doesn't store plain files there — see
+  `docs/ARCHITECTURE.md`).
 - **Obsidian tool for the agent**: `StevenStavrakis/obsidian-mcp` (v2) — filesystem-based, no REST API
   plugin or running Obsidian process required. Operates directly on the mirrored vault directory.
 - **Web research tool**: self-hosted **SearXNG** + `SecretiveShell/MCP-searxng`, chosen over a full
@@ -118,8 +99,11 @@ than assuming the ones referenced in old session transcripts still work.**
 - **stdio→HTTP bridge**: both MCP servers above are stdio-based; `sparfenyuk/mcp-proxy` wraps each as
   an SSE endpoint for n8n's built-in **MCP Client Tool** node. This keeps every tool as an independent
   container reachable over the network, rather than bundling node/python tooling into the n8n image.
-- **LLM**: a cloud API (OpenAI/Anthropic/Gemini) configured as an n8n credential — not a local/Ollama
-  model — per explicit user preference.
+- **LLM**: [OpenRouter](https://openrouter.ai/) (`@n8n/n8n-nodes-langchain.lmChatOpenRouter`), a single
+  API key with free choice of underlying model — not a local/Ollama model, and not a single locked-in
+  provider — per explicit user preference for customizability. The node's `model` parameter is a plain
+  string (e.g. `openai/gpt-5-mini`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`), so
+  swapping models never requires touching the node graph — see `docs/SETUP.md` Phase 4.
 - **Trigger**: n8n's built-in **Local File Trigger** node, watching the ring-notes subfolder inside the
   mirrored vault directory (mounted into the n8n container).
 

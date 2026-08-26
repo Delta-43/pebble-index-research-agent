@@ -61,36 +61,34 @@ services need write access to the same volume.
 container) — `mc alias set ... http://...` fails with *"Client sent an HTTP request to an HTTPS
 server"*; use `https://` (`--insecure` if the cert isn't trusted by the calling client) instead.
 
-## Deploying `livesync-cli` as a persistent service (`vault-mirror-service`)
+**`livesync-cli daemon`'s console logs are silent on routine successful syncs — don't use `docker logs`
+as your evidence of whether sync is working.** During `n8n-workflow-agent` e2e testing (2026-08-25), the
+daemon appeared completely unresponsive to new/edited files (no log lines at all, even ~1 minute after
+files landed on disk), which looked like a real regression from `spike-livesync-s3`'s original "reacts
+within seconds" finding. **It wasn't** — `showVerboseLog: false` in `livesync-settings.json` means only
+the very first startup/mirror-scan cycle logs per-file detail; every subsequent successful push is
+silent on stdout. Checking the actual MinIO bucket directly (not the container logs) proved it had been
+working correctly the entire time:
+```bash
+mc alias set pebbleagent "$LIVESYNC_S3_ENDPOINT" "$LIVESYNC_S3_ACCESS_KEY" "$LIVESYNC_S3_SECRET_KEY"
+mc ls "pebbleagent/$LIVESYNC_S3_BUCKET/"   # look for master-vault<timestamp>-docs.jsonl.gz, sorted by time
+```
+A controlled follow-up test (`livesync-cli` left running normally, one new file dropped) confirmed a
+fresh journal chunk appears in the bucket **within 2 seconds** — matching the original spike's finding
+exactly. **When checking whether `livesync-cli` is working, verify against the MinIO bucket (or the
+`master-vault_00000000-milestone.json` doc's per-node `progress`/`last_connected` fields), not the
+daemon's stdout.**
 
-**Use host bind mounts, not anonymous Docker volumes.** `mcp-obsidian` (and later n8n's own compose
-stack) needs to mount the *identical* vault directory by path. An anonymous named volume works fine for
-a single service, but sharing it across separate `docker-compose.yml` files/projects requires extra
-`external: true`/`name:` wiring. A plain host path (`VAULT_MIRROR_PATH=/data/vault-mirror/vault` in
-`docker/.env`) is simpler to reason about and document.
-
-**A brand-new persistent directory does not need any of the spike's local db state carried over** —
-seed it with only the already-bootstrapped `settings.json` (and an empty `.obsidian/`), start `daemon`,
-and the initial "mirror scan" pulls the full remote history down fresh. Confirmed via
-`[Daemon] Total files to synchronise: N` / `Synchronisation completed: ...` on first boot.
-
-**Root-owned subdirectories block host-side writes into them, but not into the vault root.** The
-container runs as root, so any subdirectory it *materializes itself* (e.g. `Index Inbox/`, pulled down
-from the remote) ends up `root:root` mode `755` — a non-root host user gets `Permission denied` trying
-to create a file inside it directly (`echo test > ".../Index Inbox/x.md"` fails). Writing directly into
-the **top-level vault directory** (owned by whoever ran the initial `mkdir -p`) works fine, since that
-directory itself wasn't touched by the root-run container. This only matters for host-side manual
-testing/debugging — the production write path is always through a container (`livesync-cli` itself, or
-later `mcp-obsidian`/n8n), which runs as root anyway and is unaffected.
-
-**Confirming the chokidar file-watcher is actually running requires `--verbose` (or patience).** Plain
-`daemon` mode logs almost nothing for the local→remote direction under normal log levels — a local file
-create/delete can complete successfully with zero new log lines at the default verbosity, which looks
-identical to "it's not working." Re-run with `--verbose` appended to the daemon command (or
-`docker logs -f` on a manually-started verbose instance) to see confirmation lines like
-`[Info] STORAGE -> DB (plain) <path>` (upload) and `[Daemon] NEWER_WINS: Treating missing local file as
-deletion (<path>)` → `[Daemon] DELETE DATABASE: <path>` (delete propagation). Don't conclude the watcher
-is broken from silence alone at default verbosity.
+**Confirmed: sync works with zero Obsidian instances live on any device**, which matters because it's
+easy to assume (wrongly) that a "sync" tool needs two live endpoints talking to each other. Journal Sync
+is a durable, asynchronous, object-storage-mediated log, not live peer-to-peer replication — inspecting
+`master-vault_00000000-milestone.json`'s `node_info` map shows each device (phone, desktop, this
+project's `livesync-cli`) tracked independently with its own `progress` cursor (the last journal chunk
+it has processed) and `last_connected` timestamp. During this entire test, neither the phone nor desktop
+had connected in hours — yet `livesync-cli`'s pushes landed in the bucket perfectly. Whichever device
+opens next simply compares its own cursor against the latest chunks and pulls whatever it missed.
+Nothing in the protocol requires the server and a phone/desktop Obsidian instance to be online at the
+same time.
 
 ## MCP stdio→SSE bridging (`spike-mcp-bridge`)
 
@@ -155,5 +153,159 @@ SSE handshake check):**
   validating the exact path n8n's MCP Client Tool node will use.
 - `obsidian-mcp@2` logs a harmless `[LEGACY_MCP_PROTOCOL]` warning against `mcp-proxy` (2025-era
   handshake) — expected, not a bug; do not add `--legacy reject`.
+
+## SearXNG deployment (`searxng-service`)
+
+**Declaring a project network without `external: true` silently creates a differently-named,
+duplicate network — even when a network of the intended name already exists.** `docker-compose.yml`
+declared `pebble-agent-internal` as a plain `driver: bridge` network. `docs/SETUP.md` Phase 1 already
+creates a real `pebble-agent-internal` network as a one-time manual step before first deploy — but
+without `external: true`, Compose doesn't know that and instead creates its own
+`<project-name>_pebble-agent-internal` (project name defaults to the directory the compose file lives
+in, e.g. `docker` here → `docker_pebble-agent-internal`), and attaches `searxng` to *that* instead.
+Confirmed on `home_server`: `docker compose up -d searxng` created `docker_pebble-agent-internal`
+alongside the pre-existing (correct) `pebble-agent-internal`, silently diverging from the network every
+other doc/comment in this repo references by name. Fix: mark it `external: true` in
+`docker-compose.yml` so Compose reuses the network Phase 1 already created, rather than assuming
+Compose will infer that from the name alone.
+
+**Current SearXNG (2026.8.22) refuses to start at all with the default `secret_key` placeholder** —
+this is new/stronger behavior than older "just rotate it before exposing publicly" guidance suggests.
+Leaving `server.secret_key: "ultrasecretkey"` in a bind-mounted `settings.yml` (bind-mounting bypasses
+the image's own entrypoint, which only auto-randomizes a *freshly generated* settings.yml, never one
+supplied via a mount) causes an immediate, permanent crash loop:
+```
+ERROR:searx.webapp: server.secret_key is not changed. Please use something else instead of ultrasecretkey.
+[ERROR] Unexpected exit from worker-1
+```
+This happens regardless of network exposure — confirmed it crash-loops even fully isolated on
+`pebble-agent-internal` with no published port and no reachability from n8n or the host. Fix: generate
+a real secret before first deploy — `docker/searxng/settings.yml.example` (tracked) has the placeholder
+and the exact command; `docker/searxng/settings.yml` (gitignored, holds the real secret) is what's
+actually mounted. After that, `docker compose up -d searxng` starts cleanly and `curl
+'http://searxng:8080/search?q=...&format=json'` from another container on `pebble-agent-internal`
+returns real results (confirmed with a real query — live repebble.com/pebblecart.com hits for "pebble
+smartwatch", same real-result check as `spike-mcp-bridge`'s `mcp-searxng` validation). One non-fatal
+warning is expected and harmless: `wikidata: engine init was not successful` (HTTP 403 from that one
+upstream engine) — other engines (google cse, duckduckgo, etc.) work fine.
+
+## n8n workflow build (`n8n-workflow-trigger`, `n8n-workflow-agent`)
+
+**`n8n import:workflow` requires a top-level `id` field on the workflow JSON — undocumented in
+`--help`, and the error doesn't say so directly.** A workflow JSON with no top-level `id` (just
+`name`/`nodes`/`connections`/etc., the way many shared workflow exports look) fails with:
+```
+null value in column "id" of relation "workflow_entity" violates not-null constraint
+```
+Fix: include a top-level `"id"` (any unique string works — this project uses a random 16-hex-char
+string, not necessarily a full UUID).
+
+**Re-importing this workflow's JSON (e.g. after `git pull`-ing an updated version) silently overwrites
+any live customization** — the credential you attached, the model you picked, and the active/published
+state all get reset to whatever's in the file, with no warning and no diff shown. Confirmed by
+re-importing this repo's own committed file over a live, working, customized instance: the credential
+was dropped, the model reverted to the file's default, and the workflow was deactivated (needing a
+`publish:workflow` + restart to recover — see below). If you've customized the workflow after your
+first import, either re-apply your credential/model afterward, or export your current live version
+first (`n8n export:workflow --id=<id>`) and diff before re-importing.
+
+**If you only need to change one field on a live, customized workflow (e.g. tweak the system prompt),
+don't re-import the whole file — patch it surgically instead.** n8n's own MCP server (if you have it
+connected) exposes an `update_workflow` tool with a `setNodeParameter` operation that edits a single
+node parameter by JSON-Pointer path without touching anything else — confirmed safe (credential and
+model untouched) where a full re-import would have clobbered both (see above). Editing via this path
+still creates a new **draft** version rather than publishing immediately — call `publish_workflow` (or
+the CLI's `n8n publish:workflow`) afterward, then restart n8n, same as any other activation change.
+
+**A real ring recording surfaced a genuine agent-behavior bug that no amount of infra testing would
+catch: the agent sometimes makes an unnecessary extra tool call that destroys its own good work.**
+First real end-to-end test (2026-08-26, `poolside/laguna-s-2.1:free` via OpenRouter): the agent
+searched correctly and called `obsidian_create_note` with a complete, well-structured note — confirmed
+via the full execution trace (`get_workflow_execution` with `includeData: true`) that the tool call's
+`content` argument was the full, correct note. It then, unprompted, called `obsidian_read_note` on the
+note it had just created (not instructed to), followed by `obsidian_edit_note` with `operation:
+"replace"` and a single stray sentence fragment as `content` — overwriting its own good note with
+near-nothing. n8n reported the execution as `"status": "success"` throughout; there was no error
+anywhere, because from n8n's perspective every tool call succeeded. This is invisible to any
+infrastructure-level check and can only be caught by actually reading the resulting note.
+- **Diagnosis required real execution data**, which needs the workflow's "MCP access" toggle enabled
+  in the n8n UI first (off by default) — without it, `search_workflow_executions`/
+  `get_workflow_execution` return `"Workflow is not available in MCP"`. Once enabled, `truncateData: 1`
+  and filtering by `nodeNames: ["Research Agent"]` keeps the (very large — 150k+ characters
+  untruncated) response manageable.
+- **Fix**: tightened the system prompt with an explicit step 8 forbidding any further tool calls on the
+  research note after creation (`"Do not call obsidian_read_note, obsidian_edit_note, or any other tool
+  on the research note after step 6... immediately respond with your final answer and make no further
+  tool calls"`), plus emphasizing steps 6-7 happen **once**. Re-tested against the same real note after
+  the fix (via the surgical `update_workflow` patch above): the agent created the note once, appended
+  the backlink once, and stopped — no extra calls, confirmed via a fresh execution trace.
+- This is inherently a **prompt-engineering mitigation, not a structural guarantee** — a different or
+  future model could still misbehave differently. If you see a research note that looks truncated or
+  wrong despite a `"success"` execution, check the full execution trace before assuming it's an infra
+  problem.
+
+**Don't guess node `type`/`typeVersion`/parameter names from memory or docs — read them out of the
+running instance instead.** Every n8n node ships a declarative schema at
+`.../n8n-nodes-base/dist/node-definitions/nodes/n8n-nodes-base/<nodeName>/v<N>.ts` (and the
+`@n8n/n8n-nodes-langchain` equivalent for AI nodes) inside the container, with the exact `type` string,
+`typeVersion`, and every parameter name/shape for that version — e.g. find it with `find / -iname
+"*McpClientTool*"` inside the container, then read the highest-numbered `vN.ts`. This is how this
+project's `n8n/workflows/pebble-index-research-agent.json` was built, and it's why the MCP Client Tool
+node uses `serverTransport: "sse"` (default is actually `"httpStreamable"`, which would silently fail
+against `mcp-proxy`'s SSE-only endpoints) and why the Agent node's default chat model is `gpt-5-mini`
+rather than an older/deprecated one.
+
+**The Local File Trigger node's output only carries `{ event, path }`, not file content.** (Confirmed
+from `LocalFileTrigger.node.js`'s `trigger()` implementation — it emits exactly `{ event, path }` per
+matched filesystem event, nothing else.) The workflow reads the note's content itself via
+**Read/Write Files from Disk** (`operation: "read"`, `fileSelector: "={{ $json.path }}"`) →
+**Extract from File** (`operation: "text"`) immediately after the trigger, rather than relying on
+`obsidian_read_note` for the very note that triggered the run.
+
+**OpenRouter Chat Model's `model` parameter is a plain string, unlike OpenAI's resource-locator
+`{__rl, mode, value}` shape.** Swapped `lmChatOpenAi` for `@n8n/n8n-nodes-langchain.lmChatOpenRouter`
+(per user preference — one API key, free choice of any underlying model) partway through building this
+workflow. The two nodes' `model` parameter isn't a drop-in match: OpenAI's is a resource-locator object
+(`{"__rl": true, "mode": "list", "value": "gpt-5-mini", "cachedResultName": "gpt-5-mini"}`), OpenRouter's
+is just `"openai/gpt-5-mini"` (a plain string). Re-used the same credential-omitted pattern (left unset
+for the user to attach post-import) and confirmed the swap re-imports and round-trips cleanly.
+
+**A workflow can show "Published"/"Active" in the n8n UI with its trigger completely non-functional,
+with no error surfaced anywhere in the UI.** Two separate default security restrictions in recent n8n
+versions silently break the Local File Trigger node used here — neither shows up as an import error, a
+publish error, or a UI warning; both only appear in the container's own logs:
+
+1. **`NODES_EXCLUDE` defaults to `["n8n-nodes-base.executeCommand", "n8n-nodes-base.localFileTrigger"]`**
+   (from `@n8n/config`'s `NodesConfig`). With this default, the node is simply never registered — at
+   boot, the log shows `Issue on initial workflow activation try of "<name>" (ID: ...) (startup)`
+   immediately followed by `Unrecognized node type: n8n-nodes-base.localFileTrigger`. The workflow still
+   shows "Active" in the UI; the trigger just silently never starts. Fix: set `NODES_EXCLUDE` explicitly
+   to override the default, e.g. `'["n8n-nodes-base.executeCommand"]'` to re-enable just
+   `localFileTrigger` while keeping the more dangerous `executeCommand` blocked.
+2. **`N8N_RESTRICT_FILE_ACCESS_TO` defaults to `~/.n8n-files`** (from `@n8n/config`'s `SecurityConfig`,
+   *not* empty as the "only applies if you set it" framing in some docs implies). Once the trigger
+   itself is fixed, the downstream **Read/Write Files from Disk** node then fails on every run with
+   `Access to the file is not allowed.` (a `NodeOperationError`, visible in that node's execution error,
+   not in the container logs) for any path outside that default. Fix: set `N8N_RESTRICT_FILE_ACCESS_TO`
+   to a semicolon-separated list including the vault mirror path, e.g.
+   `/vault-mirror;~/.n8n-files` (keeping the default alongside the addition, since other n8n features may
+   rely on it).
+
+Both are found by reading `@n8n/config`'s `nodes.config.js`/`security.config.js` source directly inside
+the container (`find / -path '*@n8n/config*' -iname '*.js'`) — grepping the container's own logs for the
+error text (`Unrecognized node type`, `Access to the file is not allowed`) leads to the throwing code
+(`n8n-core`'s `load-nodes-and-credentials.js`, `file-system-helper-functions.js`), which leads to the
+config class whose default is the actual root cause. **Both changes require restarting n8n to take
+effect** — publishing/activating a workflow updates the database immediately, but the already-running
+process only builds its list of "which triggers to actually start" once, at boot (confirmed: this is
+literally what `n8n publish:workflow`'s own CLI output warns — `Note: Changes will not take effect if
+n8n is running. Please restart n8n` — and it turned out to be true of UI-based publish/activate too).
+
+**The same host directory is mounted at *different* container paths in different services** —
+`/vault-mirror` in `n8n` (this project's addition to n8n's own `compose.yml`, read-only) vs. `/vault` in
+`mcp-obsidian` (this project's own `docker-compose.yml`). A **Set** node (`Prepare Agent Input`) strips
+the `/vault-mirror/` prefix off the trigger's absolute path before handing a vault-*relative* path to
+the agent, since `obsidian_create_note`/`obsidian_edit_note` expect paths relative to `mcp-obsidian`'s
+own vault root, not n8n's absolute filesystem path.
 
 

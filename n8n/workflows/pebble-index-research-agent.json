@@ -1,0 +1,153 @@
+{
+  "id": "5dca518df52940dd",
+  "name": "Pebble Index → Research Note",
+  "nodes": [
+    {
+      "id": "af415849-1fb8-4eb1-b37a-2744f63b01f5",
+      "name": "Watch Index Inbox",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [-680, 0],
+      "notes": "\"Index Inbox\" is this project's own vault's folder name for ring transcripts. If your Pebble app saves notes to a differently-named folder, change the path below to match — nothing else in this workflow needs to change.",
+      "notesInFlow": true,
+      "parameters": {
+        "triggerOn": "folder",
+        "path": "/vault-mirror/Index Inbox",
+        "events": ["add"],
+        "options": {
+          "awaitWriteFinish": true
+        }
+      }
+    },
+    {
+      "id": "6be0a4df-7e3b-4ee4-b272-495e4322876b",
+      "name": "Read Note From Disk",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [-440, 0],
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $json.path }}",
+        "options": {}
+      }
+    },
+    {
+      "id": "aea1fa23-ee03-4c94-8831-76040492c927",
+      "name": "Extract Note Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [-200, 0],
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "noteText"
+      }
+    },
+    {
+      "id": "cb40a863-4acf-4f08-923e-8e5203036728",
+      "name": "Prepare Agent Input",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [40, 0],
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "notePath",
+              "name": "notePath",
+              "type": "string",
+              "value": "={{ $('Watch Index Inbox').item.json.path.replace('/vault-mirror/', '') }}"
+            },
+            {
+              "id": "noteText",
+              "name": "noteText",
+              "type": "string",
+              "value": "={{ $json.noteText }}"
+            }
+          ]
+        },
+        "includeOtherFields": false
+      }
+    },
+    {
+      "id": "cf93a572-6029-4a3e-bdda-97591cb30e86",
+      "name": "Research Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [300, 0],
+      "parameters": {
+        "promptType": "define",
+        "text": "=New Index note detected.\n\nVault-relative path: {{ $json.notePath }}\n\nTranscript:\n{{ $json.noteText }}",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "You are a research assistant for a voice-note pipeline. Each run gives you the vault-relative path and full transcript of one short voice note, transcribed from a Pebble Index ring recording. The transcript is often a fragment, a question, or a passing thought — infer the real research intent from context rather than taking it too literally.\n\nDo the following, in order:\n1. Read the transcript and identify the core research question(s) or topic(s) it implies.\n2. Use the `search` tool to gather relevant, current information from the web. Call it as many times as needed with different queries to cover the topic well — don't stop at one query if the topic has multiple angles.\n3. Synthesize your findings into a well-structured Markdown research note: a few clear sections, concrete information (not vague generalities), and reasonable length — useful and focused, not exhaustive padding.\n4. Choose a clear, descriptive title for the note. Do not just reuse the transcript text as the title.\n5. Choose 2-5 relevant topical tags (lowercase, hyphenated, no spaces). Then add two fixed tags that go on every note this workflow creates, regardless of topic: `interests` and `questions`.\n6. Call `obsidian_create_note` ONCE to save the note into the `Research/` folder (e.g. `Research/<your title>.md`). Include YAML frontmatter with a `tags` list containing both the topical tags from step 5 AND the two fixed tags (`interests`, `questions`) together, a `source` field set to the exact original note path given above, and a `created` field set to today's date. Get the full content right in this single call — do not plan to revise it afterward.\n7. After creating the note, call `obsidian_edit_note` ONCE on the original note (the exact path given above) to append a short backlink, e.g. a new line `Researched: [[<research note title>]]`.\n8. STOP. Do not call `obsidian_read_note`, `obsidian_edit_note`, or any other tool on the research note after step 6 — it is already correct and final the moment you create it. Re-reading or re-editing it is unnecessary and risks overwriting your own good work with a fragment. Once step 7 is done, immediately respond with your final answer and make no further tool calls.\n\nRespond with one short sentence confirming what you created and its path — no need to repeat the full note content back."
+        }
+      }
+    },
+    {
+      "id": "dd74772c-168a-4d4a-af53-319e65dbf883",
+      "name": "OpenRouter Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+      "typeVersion": 1,
+      "position": [180, 260],
+      "parameters": {
+        "model": "openai/gpt-5-mini",
+        "options": {}
+      }
+    },
+    {
+      "id": "a7e66c4d-3978-47d0-8176-3ecc30cd44de",
+      "name": "MCP: obsidian-mcp",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.4,
+      "position": [380, 260],
+      "parameters": {
+        "endpointUrl": "http://mcp-obsidian:8801/sse",
+        "serverTransport": "sse",
+        "authentication": "none",
+        "include": "all"
+      }
+    },
+    {
+      "id": "cfc84e26-49c5-4529-a9c3-a0fd60da925f",
+      "name": "MCP: mcp-searxng",
+      "type": "@n8n/n8n-nodes-langchain.mcpClientTool",
+      "typeVersion": 1.4,
+      "position": [580, 260],
+      "parameters": {
+        "endpointUrl": "http://mcp-searxng:8802/sse",
+        "serverTransport": "sse",
+        "authentication": "none",
+        "include": "all"
+      }
+    }
+  ],
+  "connections": {
+    "Watch Index Inbox": {
+      "main": [[{ "node": "Read Note From Disk", "type": "main", "index": 0 }]]
+    },
+    "Read Note From Disk": {
+      "main": [[{ "node": "Extract Note Text", "type": "main", "index": 0 }]]
+    },
+    "Extract Note Text": {
+      "main": [[{ "node": "Prepare Agent Input", "type": "main", "index": 0 }]]
+    },
+    "Prepare Agent Input": {
+      "main": [[{ "node": "Research Agent", "type": "main", "index": 0 }]]
+    },
+    "OpenRouter Chat Model": {
+      "ai_languageModel": [[{ "node": "Research Agent", "type": "ai_languageModel", "index": 0 }]]
+    },
+    "MCP: obsidian-mcp": {
+      "ai_tool": [[{ "node": "Research Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "MCP: mcp-searxng": {
+      "ai_tool": [[{ "node": "Research Agent", "type": "ai_tool", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
