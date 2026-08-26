@@ -33,6 +33,10 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
 > deployment (`Index Inbox/` and `n8n_n8n_internal`, respectively) — yours will likely be named
 > differently. `docs/SETUP.md` shows how to find/set your own for both.
 
+Every research note gets a clear title, 2-5 topical tags, and two fixed tags applied to every note this
+workflow creates — `#interests` and `#questions` — plus a `source` link back to the original voice note.
+Customizable (see [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later)).
+
 ## Why this design
 
 - **No Docker Desktop needed** — everything runs on a headless Ubuntu server via plain `docker-ce` +
@@ -44,6 +48,9 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
   instance via an MCP server, so no third-party search API key is required.
 - **Standard n8n building blocks** — trigger, AI Agent node, and MCP Client Tool nodes; no custom code
   needed inside n8n itself.
+- **No exposed attack surface** — every MCP/service endpoint is internal-only (Docker network isolation,
+  no published host ports); secrets never touch git (`docker/.env` and the generated SearXNG secret are
+  gitignored — `docker/.env.example` documents what's needed instead).
 
 ## Components
 
@@ -58,24 +65,17 @@ Ring → Pebble App (phone) → transcribed note saved in Obsidian vault
 
 ## Project status
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and rationale, and
-[`docs/SETUP.md`](docs/SETUP.md) for the step-by-step install guide.
+Fully validated end-to-end on a real deployment — every piece of the pipeline above, including a real
+ring recording — with no known open issues. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#open-questions--spikes)
+for the detailed validation history if you want the evidence behind that claim.
 
-- [x] Validate `livesync-cli` daemon mode against a MinIO/S3 remote
-- [x] Validate stdio→SSE bridging for both MCP servers
-- [x] Docker Compose stack for the server (`livesync-cli`, dedicated `searxng`, `mcp-obsidian`,
-      `mcp-searxng` — deployed and round-tripped real tool calls/searches on the real server)
-- [x] n8n workflow (trigger → agent → tools → save note) — built, imported, activated, and confirmed
-      working end-to-end on the real n8n instance, using OpenRouter (any underlying model, one API key)
-- [x] End-to-end test — agent half: a real dropped note triggered a real web search and produced a
-      real, correctly-tagged research note with a backlink, using a free OpenRouter model
-- [x] End-to-end test — sync-back half: confirmed `livesync-cli` picks up and pushes new/edited files
-      to MinIO correctly, and that this works with **zero Obsidian instances live on any device** (see
-      `docs/TROUBLESHOOTING.md`)
-- [x] Test with a real ring recording — confirmed working end-to-end; also surfaced and fixed a real
-      agent-behavior bug in the process (see `docs/TROUBLESHOOTING.md`)
-- [x] Full documentation pass — repo generalized for other users to replicate (parameterized network
-      name, called out vault-specific values, rewrote `docs/SETUP.md` as a linear step-by-step guide)
+## Documentation
+
+| Doc | What's in it |
+|---|---|
+| [`docs/SETUP.md`](docs/SETUP.md) | Step-by-step deployment guide (Phase 0-5), plus [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later) for changes after your first deploy (rotating credentials, switching models, moving paths, updating the repo, etc.) |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The *why* behind every design decision, and the full validation history for each component |
+| [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Real errors hit while building this, with exact messages and fixes — check here first if something breaks |
 
 ## Prerequisites
 
