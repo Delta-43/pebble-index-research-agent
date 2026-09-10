@@ -51,6 +51,24 @@ restart is needed after every publish/activate while n8n is already running; and
 server's `update_workflow` (`setNodeParameter`) for single-field edits to a live, customized workflow
 over re-importing the whole file, which silently clobbers credentials/model/active-state.
 
+**Manual Watch Inbox trigger added and validated end-to-end (2026-09-10)**: a second, manually-fired
+webhook trigger (`Watch Inbox (Manual)`) now shares the same live workflow, `Research Agent`, and tools —
+it researches whichever note in `Watch Inbox/` is currently newest, on demand, rather than watching a
+folder automatically. `Watch Inbox/` is written by a separate, deliberately decoupled sibling project,
+[`pebble-watch-obsidian-notes`](https://github.com/Delta-43/pebble-watch-obsidian-notes) ("Delta Notes"),
+which happens to share this project's own vault mirror. Built and edited live via the n8n MCP connector's
+`update_workflow` operations (not a full re-import), then re-exported into
+`n8n/workflows/pebble-index-research-agent.json`. Two real findings surfaced along the way, both fully
+documented in `docs/TROUBLESHOOTING.md`:
+- `obsidian-mcp` hardcodes `0600` on every file it writes (affecting `Research/` notes too, previously
+  unnoticed since nothing needed to read those back) — fixed with a background `inotifywait`-based chmod
+  watcher added to `docker/mcp-obsidian/Dockerfile`'s entrypoint, not a config change (there isn't one).
+- The n8n MCP connector's `setNodeParameter`/`updateNodeParameters` operations are scoped to
+  `node.parameters` only — attempting to set a true top-level node field (e.g. `notes`) silently writes a
+  functionally-inert duplicate key instead of erroring. This cost two full publish-and-retest cycles
+  before a `403`/`200` webhook probe surfaced it; `updateNodeParameters` with `replace: true` is the fix
+  once a node is in this state.
+
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 
@@ -68,9 +86,9 @@ for a synced task list if one has been added to this repo). As of this writing, 
    unnecessary extra tool call)
 8. `docs-repo` — ✅ done: repo generalized for other users (parameterized n8n network name, called out
    vault-specific values, `docs/SETUP.md` rewritten as a linear guide)
-9. `publish-github` — **next up** (repo already exists and is public:
-   `Delta-43/pebble-index-research-agent`; remaining work is merging the open PR and any final
-   release polish, not initial creation)
+9. `publish-github` — ✅ done (repo public: `Delta-43/pebble-index-research-agent`)
+10. `manual-watch-inbox-trigger` — ✅ done: added, tested end-to-end on the live server, and documented
+    (see above) — **next up**: land this change via a feature branch + PR per usual convention
 
 ## Environment / access notes
 
@@ -105,7 +123,10 @@ for a synced task list if one has been added to this repo). As of this writing, 
   string (e.g. `openai/gpt-5-mini`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview`), so
   swapping models never requires touching the node graph — see `docs/SETUP.md` Phase 4.
 - **Trigger**: n8n's built-in **Local File Trigger** node, watching the ring-notes subfolder inside the
-  mirrored vault directory (mounted into the n8n container).
+  mirrored vault directory (mounted into the n8n container). A second, manually-fired **Webhook** trigger
+  (Header Auth-protected) was added later for the sibling Delta Notes project's `Watch Inbox/` folder —
+  see "Manual Watch Inbox trigger" above and `docs/ARCHITECTURE.md`'s Trigger section. Both feed the same
+  `Research Agent`.
 
 If you find any of the above is wrong once tested against real infrastructure, update
 `docs/ARCHITECTURE.md` and this file's "Key decisions" section together, and record the correction in

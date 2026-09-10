@@ -261,6 +261,73 @@ Within a few seconds, check:
   verify sync directly against your MinIO bucket if you want independent confirmation before waiting on
   your phone.
 
+## Phase 6 — Add the manual Watch Inbox trigger (optional)
+
+If you've also deployed [`pebble-watch-obsidian-notes`](https://github.com/Delta-43/pebble-watch-obsidian-notes)
+("Delta Notes" — a separate, deliberately decoupled project that lets you dictate notes from a Pebble
+watch straight into your vault's `Watch Inbox/` folder), you can add a second, **manually-fired** trigger
+to this same workflow: a webhook that researches whatever the *newest* note in `Watch Inbox/` is, the
+moment you call it. It shares the same `Research Agent`, tools, and note-writing logic as the automatic
+Index Inbox trigger — the only difference is how it starts and which folder it reads from.
+
+This is already included in `n8n/workflows/pebble-index-research-agent.json` (the **Watch Inbox
+(Manual)** node and the three nodes that select the newest file). Nothing extra to import — just:
+
+**Step 1 — create a Header Auth credential.** The webhook ships with `authentication: headerAuth` but no
+credential attached (same "ships unset" pattern as the OpenRouter credential in Phase 4). In the n8n
+editor: **Settings → Credentials → New → Header Auth**, then pick a header name (e.g.
+`X-Watch-Inbox-Token`) and a random secret value (`openssl rand -hex 32` is fine). Click the **Watch
+Inbox (Manual)** node and attach this credential.
+
+**Step 2 — check the folder name.** This project's own vault uses `Watch Inbox/` for Delta Notes' notes
+(that project's own default) — if yours differs, edit the **List Watch Inbox Notes** node's glob from
+`/vault-mirror/Watch Inbox/*.md` to match. Nothing else needs to change.
+
+**Step 3 — publish.** Unlike the Index Inbox trigger, a webhook doesn't need an n8n restart to register
+after publishing — just Publish/Activate the workflow as usual.
+
+**Step 4 — fire it:**
+
+```bash
+curl -X POST https://<your-n8n-host>/webhook/watch-inbox-research \
+  -H "X-Watch-Inbox-Token: <your secret value>"
+```
+
+A `403` means the header's missing or wrong; a `200` with `{"message":"Workflow was started"}` means it's
+running — check n8n's Executions list for the run.
+
+> [!NOTE]
+> **If Delta Notes writes into the same vault mirror this project already mounts** (the common case —
+> both projects can share one physical vault while staying decoupled at the workflow level), you may hit
+> the same permission gotcha this project's own deployment did: `obsidian-mcp` writes every note as
+> owner-only (`0600`), which a non-root reader (like this trigger, or n8n's own process) can't read back.
+> This repo's `docker/mcp-obsidian/Dockerfile` already includes a background fix (a small `inotifywait`
+> watcher that loosens new files to `644` the instant they're written) — see
+> [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#manual-watch-inbox-trigger-permission-fix) for the full story
+> if you're running an older `mcp-obsidian` image built before this fix landed (`docker compose up -d
+> --build mcp-obsidian` picks it up).
+
+### Triggering it without a terminal
+
+"Manually" should mean one tap, not SSH-ing in to run `curl`. A few ways to make that one tap happen:
+
+- **iOS**: the built-in **Shortcuts** app — a "Get Contents of URL" action, method `POST`, one header
+  (your token). Add it to your Home Screen, a Lock Screen/Action Button widget, or trigger it by Siri
+  phrase. Free, built-in, and the token never leaves your phone.
+- **Android**: there's no first-party Shortcuts equivalent, but **[HTTP
+  Shortcuts](https://github.com/Waboodoo/HTTP-Shortcuts)** (open-source, Play Store/F-Droid) does exactly
+  this — one tap, a POST request with headers, pinnable as a home-screen icon or widget. **Tasker** works
+  too if you already use it.
+- **Desktop (macOS/Windows/Linux)**: skip IFTTT — routing your webhook URL and auth token through a
+  third-party cloud service just to fire one POST cuts against this whole project's self-hosted, no
+  exposed-attack-surface design (see the README's "Why this design"). Instead, wrap the same `curl`
+  command from Step 4 in something one-click:
+  - **macOS**: the Shortcuts app (same recipe as iOS, on Ventura+), or a `.command` file bound to a
+    Raycast/Alfred custom command.
+  - **Windows**: a `.bat`/`.ps1` script (curl ships with Windows 10+) pinned to the taskbar, or Windows
+    11's built-in **Power Automate Desktop** for a no-script button.
+  - **Linux**: a shell script + a `.desktop` launcher, or bound to a keyboard shortcut.
+
 ## Reconfiguring things later
 
 Everything below is a one-off edit + restart, not a redeployment — you don't need to repeat Phases 0-5.
@@ -309,6 +376,11 @@ entries on the relevant service in `docker/docker-compose.yml`, then `docker com
 internal-only (no host port published — see the security note in `docker-compose.yml`), so there's
 rarely a reason to change them, but both images read their config from env vars rather than baking it
 into the image specifically so this doesn't require a rebuild.
+
+**Change the Watch Inbox folder name, or rotate its webhook token** — edit the **List Watch Inbox
+Notes** node's glob (folder name) or swap the Header Auth credential on the **Watch Inbox (Manual)** node
+(token rotation) in the n8n editor, then Publish. Unlike the Index Inbox trigger, this one doesn't need
+an n8n restart — see Phase 6.
 
 **Pulling an updated version of this repo** — `git pull`, then re-run any changed Dockerfile/compose
 steps (`docker compose up -d --build`, from `docker/`). If `n8n/workflows/pebble-index-research-agent.json`
