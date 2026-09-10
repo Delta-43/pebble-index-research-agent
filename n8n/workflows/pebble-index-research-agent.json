@@ -48,6 +48,8 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.5,
       "position": [40, 0],
+      "notes": "notePath is branch-aware: it resolves differently depending on which of the two triggers (Watch Index Inbox or Watch Inbox (Manual)) fired this execution.",
+      "notesInFlow": true,
       "parameters": {
         "mode": "manual",
         "assignments": {
@@ -56,7 +58,7 @@
               "id": "notePath",
               "name": "notePath",
               "type": "string",
-              "value": "={{ $('Watch Index Inbox').item.json.path.replace('/vault-mirror/', '') }}"
+              "value": "={{ $('Watch Index Inbox').isExecuted ? $('Watch Index Inbox').item.json.path.replace('/vault-mirror/', '') : 'Watch Inbox/' + $('List Watch Inbox Notes').item.json.fileName }}"
             },
             {
               "id": "noteText",
@@ -80,7 +82,8 @@
         "text": "=New Index note detected.\n\nVault-relative path: {{ $json.notePath }}\n\nTranscript:\n{{ $json.noteText }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "You are a research assistant for a voice-note pipeline. Each run gives you the vault-relative path and full transcript of one short voice note, transcribed from a Pebble Index ring recording. The transcript is often a fragment, a question, or a passing thought — infer the real research intent from context rather than taking it too literally.\n\nDo the following, in order:\n1. Read the transcript and identify the core research question(s) or topic(s) it implies.\n2. Use the `search` tool to gather relevant, current information from the web. Call it as many times as needed with different queries to cover the topic well — don't stop at one query if the topic has multiple angles.\n3. Synthesize your findings into a well-structured Markdown research note: a few clear sections, concrete information (not vague generalities), and reasonable length — useful and focused, not exhaustive padding.\n4. Choose a clear, descriptive title for the note. Do not just reuse the transcript text as the title.\n5. Choose 2-5 relevant topical tags (lowercase, hyphenated, no spaces). Then add two fixed tags that go on every note this workflow creates, regardless of topic: `interests` and `questions`.\n6. Call `obsidian_create_note` ONCE to save the note into the `Research/` folder (e.g. `Research/<your title>.md`). Include YAML frontmatter with a `tags` list containing both the topical tags from step 5 AND the two fixed tags (`interests`, `questions`) together, a `source` field set to the exact original note path given above, and a `created` field set to today's date. Get the full content right in this single call — do not plan to revise it afterward.\n7. After creating the note, call `obsidian_edit_note` ONCE on the original note (the exact path given above) to append a short backlink, e.g. a new line `Researched: [[<research note title>]]`.\n8. STOP. Do not call `obsidian_read_note`, `obsidian_edit_note`, or any other tool on the research note after step 6 — it is already correct and final the moment you create it. Re-reading or re-editing it is unnecessary and risks overwriting your own good work with a fragment. Once step 7 is done, immediately respond with your final answer and make no further tool calls.\n\nRespond with one short sentence confirming what you created and its path — no need to repeat the full note content back."
+          "systemMessage": "You are a research assistant for a voice-note pipeline. Each run gives you the vault-relative path and full transcript of one short voice note, transcribed from a Pebble Index ring recording. The transcript is often a fragment, a question, or a passing thought — infer the real research intent from context rather than taking it too literally.\n\nDo the following, in order:\n1. Read the transcript and identify the core research question(s) or topic(s) it implies.\n2. Use the `search` tool to gather relevant, current information from the web. Call it as many times as needed with different queries to cover the topic well — don't stop at one query if the topic has multiple angles.\n3. Synthesize your findings into a well-structured Markdown research note: a few clear sections, concrete information (not vague generalities), and reasonable length — useful and focused, not exhaustive padding.\n4. Choose a clear, descriptive title for the note. Do not just reuse the transcript text as the title.\n5. Choose 2-5 relevant topical tags (lowercase, hyphenated, no spaces). Then add two fixed tags that go on every note this workflow creates, regardless of topic: `interests` and `questions`.\n6. Call `obsidian_create_note` ONCE to save the note into the `Research/` folder (e.g. `Research/<your title>.md`). Include YAML frontmatter with a `tags` list containing both the topical tags from step 5 AND the two fixed tags (`interests`, `questions`) together, a `source` field set to the exact original note path given above, and a `created` field set to today's date. Get the full content right in this single call — do not plan to revise it afterward.\n7. After creating the note, call `obsidian_edit_note` ONCE on the original note (the exact path given above) to append a short backlink, e.g. a new line `Researched: [[<research note title>]]`.\n8. STOP. Do not call `obsidian_read_note`, `obsidian_edit_note`, or any other tool on the research note after step 6 — it is already correct and final the moment you create it. Re-reading or re-editing it is unnecessary and risks overwriting your own good work with a fragment. Once step 7 is done, immediately respond with your final answer and make no further tool calls.\n\nRespond with one short sentence confirming what you created and its path — no need to repeat the full note content back.",
+          "maxIterations": 20
         }
       }
     },
@@ -120,6 +123,63 @@
         "authentication": "none",
         "include": "all"
       }
+    },
+    {
+      "id": "0d99c3ae-7c2b-43dc-a69a-5377438f5f80",
+      "name": "Watch Inbox (Manual)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [-680, 400],
+      "notes": "Fire this manually (curl/phone shortcut) to research the newest note in Watch Inbox/, written by the separate Delta Notes watch app (github.com/Delta-43/pebble-watch-obsidian-notes). Protected by a Header Auth credential you create after import — see docs/SETUP.md. This trigger never fires on its own.",
+      "notesInFlow": true,
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "watch-inbox-research",
+        "authentication": "headerAuth",
+        "responseMode": "onReceived",
+        "options": {}
+      }
+    },
+    {
+      "id": "1acc0e21-78ce-49a5-bcb5-fabe95768490",
+      "name": "List Watch Inbox Notes",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [-440, 400],
+      "notes": "\"Watch Inbox\" is Delta Notes' own vault folder name. If yours differs, change the glob below to match.",
+      "notesInFlow": true,
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "/vault-mirror/Watch Inbox/*.md",
+        "options": {}
+      }
+    },
+    {
+      "id": "799ff50c-71a1-4499-aefb-d6db5771e4f2",
+      "name": "Sort Newest First",
+      "type": "n8n-nodes-base.sort",
+      "typeVersion": 1,
+      "position": [-200, 400],
+      "notes": "readWriteFile's read op doesn't expose file timestamps, only the basename — sorting the timestamp-prefixed filename descending is a reliable stand-in for \"most recently created\".",
+      "notesInFlow": true,
+      "parameters": {
+        "type": "simple",
+        "sortFieldsUi": {
+          "sortField": [{ "fieldName": "fileName", "order": "descending" }]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "797d4566-bbc2-418c-bd07-5adfece0843e",
+      "name": "Take Newest Note",
+      "type": "n8n-nodes-base.limit",
+      "typeVersion": 1,
+      "position": [40, 400],
+      "parameters": {
+        "maxItems": 1,
+        "keep": "firstItems"
+      }
     }
   ],
   "connections": {
@@ -143,6 +203,18 @@
     },
     "MCP: mcp-searxng": {
       "ai_tool": [[{ "node": "Research Agent", "type": "ai_tool", "index": 0 }]]
+    },
+    "Watch Inbox (Manual)": {
+      "main": [[{ "node": "List Watch Inbox Notes", "type": "main", "index": 0 }]]
+    },
+    "List Watch Inbox Notes": {
+      "main": [[{ "node": "Sort Newest First", "type": "main", "index": 0 }]]
+    },
+    "Sort Newest First": {
+      "main": [[{ "node": "Take Newest Note", "type": "main", "index": 0 }]]
+    },
+    "Take Newest Note": {
+      "main": [[{ "node": "Extract Note Text", "type": "main", "index": 0 }]]
     }
   },
   "active": false,

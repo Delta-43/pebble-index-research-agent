@@ -88,6 +88,18 @@ the Pebble app saves transcribed notes to `Index Inbox/`, but that may differ fo
 vault, or the app's settings) — see `docs/SETUP.md` for how to adjust the trigger's path if yours is
 different.
 
+**A second, manually-fired trigger** (`Watch Inbox (Manual)`, added after the workflow above was
+originally built and validated) covers a related but distinct case: the separate
+[`pebble-watch-obsidian-notes`](https://github.com/Delta-43/pebble-watch-obsidian-notes) ("Delta Notes")
+project lets you dictate notes from a Pebble watch straight into a `Watch Inbox/` folder — but that
+project is deliberately decoupled from this one (own n8n workflow, no AI in its own save path), so
+nothing automatically researches those notes. Rather than add a second automatic file-watcher (which
+would research *every* dictated note, not just ones you actually want researched), this is a **webhook**
+you call yourself, which researches whichever note in `Watch Inbox/` is currently newest. It shares the
+same downstream `Research Agent`, tools, and note-writing logic as the Index Inbox trigger — see
+"Workflow logic" below for how the two branches converge. `docs/SETUP.md` Phase 6 covers setup, including
+one real permission gotcha the two projects sharing a vault mirror can hit — see `docs/TROUBLESHOOTING.md`.
+
 ## Agent & tools
 
 The n8n workflow's **AI Agent** node (backed by [OpenRouter](https://openrouter.ai/) — one API key, any
@@ -193,10 +205,24 @@ own after import (see `docs/SETUP.md` Phase 4).
    rather than round-tripping through `obsidian_read_note` for the very note that just triggered the
    workflow — one fewer tool call, and n8n already needs read access to that path for the trigger
    itself.
+
+   The manual branch (`Watch Inbox (Manual)` → `List Watch Inbox Notes` → `Sort Newest First` →
+   `Take Newest Note`) feeds into this same `Extract Note Text` node — n8n lets multiple upstream nodes
+   connect to one downstream node's input; only one branch actually fires per execution. Selecting "the
+   newest note" without a real trigger event took one real finding: `readWriteFile`'s glob-based read
+   operation exposes only `fileName`/`fileExtension`/`fileSize` in its JSON output — no directory, no
+   timestamp. Since both `Index Inbox` and `Watch Inbox` notes are timestamp-prefixed
+   (`2026-09-10 1149 - ....md`), sorting the filename string descending and taking the first item is a
+   reliable stand-in for "most recently created," with no need for a Code node/`fs` access (which would
+   hit the same kind of default-restriction trap `NODES_EXCLUDE` already did for the Local File Trigger).
 3. **Prepare Agent Input** — computes the note's vault-*relative* path (`notePath`, stripping the
    `/vault-mirror/` prefix n8n sees down to what `mcp-obsidian`'s own `/vault` mount expects) alongside
    the extracted `noteText`, so the two mounts' different container-side paths for the same host
-   directory don't leak into the agent's tool calls.
+   directory don't leak into the agent's tool calls. Since two different triggers now feed this same
+   node, `notePath`'s expression branches on `$('Watch Index Inbox').isExecuted` — n8n's own way of
+   asking "did this specific node run in this execution" — to decide whether to read the path off the
+   Index Inbox trigger or reconstruct `Watch Inbox/<fileName>` from the manual branch's file-selection
+   node instead.
 4. **Research Agent** (`@n8n/n8n-nodes-langchain.agent`) — system prompt instructs the model to:
    - Identify the core research question(s) from the transcript (often a fragment — infer intent).
    - Call the `search` tool (`MCP: mcp-searxng`, possibly multiple times) to gather sources.
@@ -220,6 +246,7 @@ own after import (see `docs/SETUP.md` Phase 4).
 | `spike-mcp-bridge` | Does `mcp-proxy` reliably bridge `obsidian-mcp` and `mcp-searxng` to SSE endpoints n8n's MCP Client Tool node can use? | ✅ Validated — see findings above. Must use the real `sparfenyuk/mcp-proxy` (Python, not the unrelated `npx mcp-proxy` npm package), pin `mcp<2`, pass `--pass-environment`, and install `mcp-searxng` from source (PyPI is stale). Both bridges round-tripped real tool calls from the actual `n8n` container. |
 | `server-base-setup` | Is Docker Engine + Compose ready on `home_server`, and what's the right network/secrets layout? | ✅ Validated — Docker 29.7.2 / Compose v5.5.0 confirmed. Project cloned to `/data/projects/pebble-index-research-agent/repo`. `mcp-obsidian`/`mcp-searxng` join the existing `n8n_n8n_internal` network (external); a new `pebble-agent-internal` network isolates `searxng`. Real `.env` populated on the server from the already-bootstrapped `livesync-settings.json`. |
 | `searxng-service` | Reuse the already-running `n8n-searxng-1`, or stand up a dedicated instance? | ✅ Validated (2026-08-25) — **not** reused. `n8n-searxng-1` turned out to be an internal piece of n8n's own `instance-ai` sandbox feature (chained to `sandbox-api`/a privileged Docker-in-Docker `sandbox-runner-1`), confirmed stopped on the real server whenever that sandbox is idle — an unsuitable, undocumented dependency. Deployed the dedicated `searxng` service instead; full stack (`searxng`, `mcp-obsidian`, `mcp-searxng`) built, started, and round-tripped real MCP tool calls + a live JSON search on `home_server`, with both SSE endpoints confirmed reachable from the real `n8n` container. Two real gotchas hit along the way — see `docs/TROUBLESHOOTING.md`. |
+| `manual-watch-inbox-trigger` | Can a second, manually-fired trigger reuse the same agent/tools and reliably pick "the newest note" from a sibling project's folder without a real file-watch event? | ✅ Validated end-to-end (2026-09-10) — real webhook fire → correct newest-note selection → research note + backlink, confirmed against real Delta Notes output on the live server; the original Index Inbox trigger re-tested afterward to confirm the shared `Prepare Agent Input` expression change didn't regress it. Surfaced two real findings along the way: `obsidian-mcp` hardcodes `0600` on every file it writes (fixed with an `inotifywait`-based chmod watcher in `mcp-obsidian`'s own Dockerfile — see `docs/TROUBLESHOOTING.md`), and n8n's workflow-update API scopes `setNodeParameter`/`updateNodeParameters` paths to `node.parameters` only, silently no-op'ing on any attempt to touch a true top-level node field like `notes` (also in `docs/TROUBLESHOOTING.md`). |
 | `n8n-workflow-trigger` / `n8n-workflow-agent` | Can the actual trigger → agent → tools workflow be built with standard n8n nodes and imported cleanly? | ✅ Fully validated end-to-end (2026-08-25). Built with two real infra changes on top of the initial import: the Local File Trigger node needs the vault mirror bind-mounted **into n8n's own container** (a shared `compose.yml` edit, done with the user's go-ahead), and two n8n security defaults (`NODES_EXCLUDE`, `N8N_RESTRICT_FILE_ACCESS_TO`) needed explicit overrides or the trigger silently never activates — see `docs/TROUBLESHOOTING.md` for exactly what that looked like in the logs, since neither surfaced as an import/publish/UI error. Sourced exact node `type`/`typeVersion`/parameter names directly from the installed node definitions inside the running `n8n` container rather than guessing. Model backend switched to **OpenRouter** (`@n8n/n8n-nodes-langchain.lmChatOpenRouter`) per explicit user preference for free choice of underlying model over a locked-in provider. **Real e2e test passed**: a note dropped into `Index Inbox/` triggered the workflow, which searched the web (`poolside/laguna-s-2.1:free` via OpenRouter) and wrote a well-structured, correctly-tagged note into `Research/` plus a backlink on the original note — full round trip confirmed on the live server. Sync-back confirmed too: `livesync-cli` correctly pushed every change to MinIO (verified against the bucket directly, since the daemon's console logs stay silent on routine successful syncs — see `docs/TROUBLESHOOTING.md`), and this held with zero Obsidian instances live on any device, confirming Journal Sync's per-device-cursor design doesn't require simultaneous liveness. |
 
 ## Deployment topology

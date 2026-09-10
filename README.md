@@ -59,6 +59,14 @@ Every research note gets a clear title, 2-5 topical tags, and two fixed tags app
 workflow creates — `#interests` and `#questions` — plus a `source` link back to the original voice note.
 Customizable (see [Reconfiguring things later](docs/SETUP.md#reconfiguring-things-later)).
 
+> [!TIP]
+> There's a second, **manually-fired** trigger too: if you've also deployed
+> [`pebble-watch-obsidian-notes`](https://github.com/Delta-43/pebble-watch-obsidian-notes) ("Delta
+> Notes" — a separate, deliberately decoupled sibling project that lets you dictate notes from a Pebble
+> watch straight into your vault), a webhook you call yourself (curl, a phone shortcut) researches
+> whichever note in `Watch Inbox/` is currently newest, through the exact same agent. See [Phase 6 —
+> Add the manual Watch Inbox trigger](docs/SETUP.md#phase-6--add-the-manual-watch-inbox-trigger-optional).
+
 ## 🧩 Why this design
 
 - **No Docker Desktop needed** — everything runs on a headless Ubuntu server via plain `docker-ce` +

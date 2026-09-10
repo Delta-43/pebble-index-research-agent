@@ -308,4 +308,67 @@ the `/vault-mirror/` prefix off the trigger's absolute path before handing a vau
 the agent, since `obsidian_create_note`/`obsidian_edit_note` expect paths relative to `mcp-obsidian`'s
 own vault root, not n8n's absolute filesystem path.
 
+## Manual Watch Inbox trigger permission fix
+
+**`obsidian-mcp@2` hardcodes `0600` (owner-only) on every file it writes, with no config override —
+this silently breaks any *other* process that later needs to read that file back.** Found while adding
+the manual `Watch Inbox (Manual)` webhook trigger: its `List Watch Inbox Notes` node failed with
+`EACCES: permission denied` reading a note that the separate Delta Notes project had written into
+`Watch Inbox/` via this same `mcp-obsidian` container. Root-caused by reading the installed package
+directly inside the running container (`grep -rn "atomicWrite(" .../obsidian-mcp/dist/utils/transaction.js`)
+— `atomicWrite(target, data, replace, mode = 0o600)` is a hardcoded default with no environment variable,
+CLI flag, or vault-config override anywhere in the package. This affects **every** note `obsidian-mcp`
+has ever written, including this project's own `Research/` notes — it just never mattered before because
+nothing needed to read those back as a different user.
+
+Two things that look like fixes but *don't* work, confirmed empirically before landing on the real fix:
+- **`umask` on the container**: irrelevant. `mode` is passed explicitly to the write call; a umask can
+  only ever remove permission bits, never restore ones the explicit mode already excluded, and `0600` has
+  no group/other bits to begin with.
+- **A POSIX default ACL on the target directory** (`setfacl -d -m u:<uid>:r <dir>`) granting the reading
+  UID access: also doesn't survive it. Verified directly (`setfacl` + a plain `open(path, O_CREAT, 0o600)`
+  test): when a file is created with an explicit low-permission mode, the kernel computes the new file's
+  ACL mask as the intersection of the default ACL's mask and the **group-class bits of the requested
+  create mode** — and `0600`'s group class is `0`, so the named-user ACL entry's *effective* permission
+  gets zeroed regardless of what the directory's default ACL says (`getfacl` showed
+  `user:1000:r-- #effective:---`). ACLs cannot rescue read access from an explicitly restrictive create
+  mode.
+
+**Actual fix**: since `mcp-obsidian`'s own container already runs as root — the same owner as
+`obsidian-mcp`'s writes — added a background `inotifywait -m -r -e create,moved_to,close_write` watcher
+to `docker/mcp-obsidian/Dockerfile`'s `ENTRYPOINT` that `chmod 644`s any new file the instant it lands,
+covering both direct creates and the atomic rename-into-place pattern `obsidian-mcp`'s transaction system
+uses. Requires `inotify-tools` in the image. Confirmed working live: a fresh note written immediately
+came back `644`, and the previously-`600` note read successfully afterward. Existing already-written
+notes need a one-time manual `chmod 644` sweep (the watcher only catches files written after it starts).
+
+## n8n workflow-update API gotchas (`manual-watch-inbox-trigger`)
+
+Found while adding the trigger above via the n8n MCP connector's `update_workflow` tool (operations-based
+editing, not a full re-import — the safer approach this project's own `CLAUDE.md` already recommends for
+editing a live, customized workflow):
+
+- **`setNodeParameter`'s `path` and `updateNodeParameters`'s `parameters` are scoped to `node.parameters`
+  only — there is no operation that reaches a node's true top-level fields** (e.g. the canvas `notes`
+  annotation). A `path` of `/authentication` or `/notes` doesn't error — it silently writes into
+  `node.parameters.authentication` / `node.parameters.notes` instead (a functionally-inert duplicate key,
+  since n8n's UI reads `notes` from the real top-level field). This cost two full publish cycles before
+  being caught: an `authentication: headerAuth` change and a `maxIterations` bump both silently failed to
+  take effect this way, and a `403 → 200` webhook test was the only thing that surfaced it (the workflow
+  validated and saved with no error either time). Use `updateNodeParameters` with `replace: true` and the
+  full, correct `parameters` object to fix a node once it's gotten into this state — there's no
+  "remove one erroneous key" operation.
+- **A workflow's *draft* and *active* versions are genuinely separate — editing an already-active
+  workflow via the API does not touch what's actually running until it's explicitly published.**
+  `get_workflow_details`' `versionId` (draft) vs `activeVersionId` diverging after an `update_workflow`
+  call is the tell. Unlike the Local File Trigger's boot-time-only registration (see above, which needs a
+  full n8n *restart*), a webhook trigger's registration **does** pick up a fresh publish without
+  restarting n8n — confirmed by publishing and immediately getting a `403`/`200` from the new
+  `headerAuth` requirement with no container restart. Publishing this way requires user confirmation each
+  time — it's gated by Claude Code's own permission classifier as a live-system change, not something an
+  agent session can push through unattended.
+- **`$('<TriggerNodeName>').isExecuted`** is the correct n8n expression for "did this specific node run in
+  this execution" — used to make a single shared node (`Prepare Agent Input`) branch its logic depending
+  on which of two upstream triggers actually fired, without needing a separate Set node per branch.
+
 
