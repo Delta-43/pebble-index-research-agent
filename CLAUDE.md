@@ -69,6 +69,14 @@ documented in `docs/TROUBLESHOOTING.md`:
   before a `403`/`200` webhook probe surfaced it; `updateNodeParameters` with `replace: true` is the fix
   once a node is in this state.
 
+**Sync outage fixed (2026-11-03)**: the phone stopped uploading for about five weeks. The bucket held
+journals encrypted with two different keys, left over from a passphrase change and a reset that didn't
+delete old journals, so any device starting fresh failed on the oldest journal. Fixed by rebuilding the
+remote from the Desktop and resetting `livesync-cli`. At the same time `livesync-cli` was upgraded from
+1.0.18 to **1.0.44** and pinned to the `1.0.44-cli` tag. Full write-up and the CLI reset procedure are in
+`docs/TROUBLESHOOTING.md`. Backups from that day are in `/data/vault-mirror/` (`bucket-backup-2026-11-03/`,
+`*-2026-11-03.tgz`, `data/pre-rebuild-2026-11-03/`).
+
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 
