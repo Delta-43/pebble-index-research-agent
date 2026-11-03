@@ -95,7 +95,7 @@ vault's E2EE passphrase once, which is why this can't be automated into `docker-
 ```bash
 # Build the CLI image (also happens automatically on first `docker compose up`, but building it once
 # here lets you run the one-off bootstrap commands below directly)
-docker build -f src/apps/cli/Dockerfile -t livesync-cli https://github.com/vrtmrz/obsidian-livesync.git
+docker build -f src/apps/cli/Dockerfile -t livesync-cli https://github.com/vrtmrz/obsidian-livesync.git#1.0.44-cli
 
 DATA_DIR=<same as VAULT_MIRROR_DATA_PATH in docker/.env>
 VAULT_DIR=<same as VAULT_MIRROR_PATH in docker/.env>

@@ -36,7 +36,7 @@ services:
   # `mkdir -p "$VAULT_MIRROR_PATH/.obsidian"`.
   livesync-cli:
     build:
-      context: https://github.com/vrtmrz/obsidian-livesync.git
+      context: https://github.com/vrtmrz/obsidian-livesync.git#1.0.44-cli
       dockerfile: src/apps/cli/Dockerfile
     container_name: livesync-cli
     restart: unless-stopped
@@ -61,6 +61,12 @@ services:
     image: docker.io/searxng/searxng:latest
     container_name: searxng
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - pebble-agent-internal
     volumes:
@@ -88,6 +94,15 @@ services:
     build: ./mcp-obsidian
     container_name: mcp-obsidian
     restart: unless-stopped
+    healthcheck:
+      # No /health route -- this is a bare mcp-proxy SSE bridge, not a real
+      # app server. A 200 on the SSE endpoint itself is the only liveness
+      # signal available; python3 is the only HTTP client in the image.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8801/sse', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - n8n_internal
     volumes:
@@ -111,6 +126,14 @@ services:
     env_file: .env
     environment:
       SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+    healthcheck:
+      # Same reasoning as mcp-obsidian above: bare mcp-proxy SSE bridge, no
+      # /health route, python3 is the only HTTP client in the image.
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8802/sse', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     networks:
       - n8n_internal
       - pebble-agent-internal

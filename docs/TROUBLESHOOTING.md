@@ -90,6 +90,61 @@ opens next simply compares its own cursor against the latest chunks and pulls wh
 Nothing in the protocol requires the server and a phone/desktop Obsidian instance to be online at the
 same time.
 
+### Phone stops syncing: `Could not decrypt` / `Couldn't decode! You should wrong the passphrases`
+
+**Found 2026-11-03.** The phone stopped uploading ring notes for about five weeks with no visible error.
+The phone's log showed:
+```
+Failed to decrypt in v2. Falling back to v1: <timestamp>-docs.jsonl.gz
+Couldn't decode! You should wrong the passphrases (V2 Bin)
+Receive Journal Error
+Could not receive remote journal, so we prevent sending local journals to prevent unwanted mass transfers
+```
+The last line explains the silence: a device that can't *download* refuses to *upload*, so new notes
+stay on the phone.
+
+**How to diagnose it from the server.** Read `master-vault_00000000-milestone.json` from the bucket and
+compare each device's `progress` (the last journal it processed) with its `last_connected`. A device
+that connects recently but whose `progress` doesn't move is failing to process journals, not failing
+to connect.
+
+**Cause.** The E2EE passphrase and the journal sync parameters had changed during the vault's life
+(around 2026-09-25 and 2026-10-20), but the reset didn't delete the old journals. The bucket then held
+journals encrypted with two different keys. Devices that were already in sync (Desktop, `livesync-cli`)
+only read *new* journals, so they kept working. Any device that starts from the beginning, such as a
+fresh phone setup, fails on the very first, oldest journal. A correct passphrase, an exact Setup URI
+and a fresh install did not help, which is how we ruled out the passphrase.
+
+**Fix.**
+1. Back up the bucket prefix and the vault mirror first (`aws s3 cp --recursive`; through the
+   Cloudflare tunnel, set `default.s3.max_concurrent_requests 2` or you'll hit `TooManyRequests`).
+2. On a device with a complete, current vault (here, the Desktop), run **Overwrite remote** (rebuild).
+   This replaces all journals with one fresh set encrypted with the current key, and locks the remote.
+3. Reset every other device against the rebuilt remote. In the plugin, use Setup URI → Fetch from
+   remote. For `livesync-cli`, see below.
+
+### `livesync-cli` after a remote rebuild, and the 1.0.44 upgrade
+
+- After a rebuild, the daemon logs `Locked: Remote database is locked. This is due to a rebuild on one
+  of the terminals` and does nothing. On CLI ≥ 1.0.44, stop the daemon and run
+  `docker compose run --rm --no-deps livesync-cli --settings /data/livesync-settings.json --vault /vault fetch --force`,
+  then start it again. CLI 1.0.18 has no `fetch`; there you have to move the local database
+  (`/data/.livesync`, `/data/<device>-livesync-v2`) aside and run `mark-resolved <remote-id>`. Pass the
+  database path `/data` as the first positional argument, or `mark-resolved` registers a different device
+  ID than the daemon uses.
+- **Fetch into the existing vault directory, not an empty one.** n8n's Local File Trigger fires on `add`
+  events, so fetching into an empty directory and swapping it in would make every note in `Index Inbox/`
+  look new and research all of them again. Fetching in place left every file untouched.
+- **Upgrading from 1.0.18 to 1.0.44** makes the daemon crash-loop with
+  `[Legacy state] /data/.livesync/runtime/keyvalue-db.json: database and Vault owner is unknown`. The fix
+  is the same one-time `fetch --force`. Afterwards the CLI registers as a new device
+  (`headless-vault-headless-app`) and keeps the old local database files.
+- `fetch` rewrites `livesync-settings.json` as `root`, mode `0600`. If host tools need to read it,
+  `chown` it back to your user (keep `0600`, as it holds the S3 keys).
+- `docker-compose.yml` now pins the CLI build to the `1.0.44-cli` tag instead of building from the
+  plugin repository's `main` branch. Keep the CLI and the plugins on the same version or close to it,
+  and upgrade on purpose.
+
 ## MCP stdio→SSE bridging (`spike-mcp-bridge`)
 
 **`npx -y mcp-proxy` silently resolves to the wrong package.** There are two unrelated projects called
