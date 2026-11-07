@@ -354,7 +354,7 @@ deactivate/reactivate-equivalent cycle — restarting is the one path confirmed 
 `Research Agent` node's **System Message** in the n8n editor (or `n8n/workflows/pebble-index-research-agent.json`
 directly, then re-import — see the re-import warning in `docs/TROUBLESHOOTING.md` before doing that on a
 live, customized workflow). By default every note gets `interests` and `questions` tags in addition to
-2-5 topical ones (step 5 of the prompt) — change or remove that instruction if you want different
+2-5 topical ones (step 7 of the prompt) — change or remove that instruction if you want different
 defaults.
 
 **Move the vault-mirror host paths** — edit `VAULT_MIRROR_DATA_PATH`/`VAULT_MIRROR_PATH` in
@@ -376,6 +376,8 @@ entries on the relevant service in `docker/docker-compose.yml`, then `docker com
 internal-only (no host port published — see the security note in `docker-compose.yml`), so there's
 rarely a reason to change them, but both images read their config from env vars rather than baking it
 into the image specifically so this doesn't require a rebuild.
+If you change `VAULT_NAME`, also change the vault id in the `Research Agent` node's **System Message**
+("The vault id is always `notes`"). The agent uses that id instead of calling `obsidian_list_vaults`.
 
 **Change the Watch Inbox folder name, or rotate its webhook token** — edit the **List Watch Inbox
 Notes** node's glob (folder name) or swap the Header Auth credential on the **Watch Inbox (Manual)** node
