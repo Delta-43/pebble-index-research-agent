@@ -1,0 +1,57 @@
+{
+  "name": "Pebble Research → Alerts",
+  "nodes": [
+    {
+      "id": "3e894f9a-499b-43f6-840f-7e106db3b17d",
+      "name": "When A Pipeline Run Fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bdb2b450-e7a4-4a40-8808-f6c342683a9a",
+      "name": "Push Alert To Phone",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://ntfy.sh/",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ topic: \"YOUR-NTFY-TOPIC\", title: \"Research run failed: \" + ($json.workflow?.name ?? \"unknown workflow\"), message: ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? \"No error message\") + \"\\nNode: \" + ($json.execution?.lastNodeExecuted ?? $json.trigger?.error?.node?.name ?? \"unknown\"), priority: 4, tags: [\"warning\"], click: $json.execution?.url ?? \"https://YOUR-N8N-HOST/home/executions\" }) }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "When A Pipeline Run Fails": {
+      "main": [
+        [
+          {
+            "node": "Push Alert To Phone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

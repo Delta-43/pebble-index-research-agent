@@ -83,6 +83,17 @@ the agent prompt (batched parallel searches, stop on empty results, vault id and
 MCP tool filter (2 of 12 tools), and the OpenRouter node (120 s timeout, 2 retries). The retry used 7 calls
 and 35,719 tokens instead of 20 calls and 158,590+. Full write-up in `docs/TROUBLESHOOTING.md`.
 
+**Reliability work (2026-11-07)**: alerts, sweep, lock and pinning, after a failure-point review. All
+triggers now run one sweep (oldest unresearched `Index Inbox/` note, lock in n8n data table
+`pebble_research_lock`, attempts in `pebble_research_notes`, backlink read back before marking done).
+`Watch Inbox/` stays opt-in (webhook only, newest first) per the user's decision. Alerts go to ntfy
+(topic in `docker/.env`, not in git): `Pebble Research → Alerts` (error workflow), `Pebble Research →
+Watchdog` (every 6 hours, OK summary at 09:05), and `scripts/pipeline-healthcheck.sh` (host cron, every
+15 minutes). Images and packages are pinned; Renovate opens update PRs. The n8n, MinIO and cloudflared
+compose files outside this repo (`~/.docker_configs/`) were pinned by hand with `.bak.<timestamp>`
+backups. SearXNG: Bing disabled (off-topic results), Yahoo enabled, `default_lang: en`. Details in
+`docs/TROUBLESHOOTING.md`.
+
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 
@@ -140,7 +151,9 @@ for a synced task list if one has been added to this repo). As of this writing, 
   mirrored vault directory (mounted into the n8n container). A second, manually-fired **Webhook** trigger
   (Header Auth-protected) was added later for the sibling Delta Notes project's `Watch Inbox/` folder —
   see "Manual Watch Inbox trigger" above and `docs/ARCHITECTURE.md`'s Trigger section. Both feed the same
-  `Research Agent`.
+  `Research Agent`. **Updated 2026-11-07**: the file event is only a hint; a 30-minute sweep against the
+  vault's backlinks is the source of truth (a missed file event lost notes otherwise). `Watch Inbox/`
+  stays opt-in.
 
 If you find any of the above is wrong once tested against real infrastructure, update
 `docs/ARCHITECTURE.md` and this file's "Key decisions" section together, and record the correction in

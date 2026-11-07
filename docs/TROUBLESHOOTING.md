@@ -474,3 +474,57 @@ does not always respect the batching rule exactly, but `maxIterations` limits th
 agent to append `` `\nResearched: [[<title>]]` ``. The agent copied the backslash and the `n` as two
 literal characters into the note. The prompt now asks for "a line break followed by
 `Researched: [[<title>]]`" instead.
+
+## Reliability: sweep, lock, alerts and pinning (2026-11-07)
+
+A failure-point review found that most failures were silent: no alert on a failed run, no health
+check on `livesync-cli` (which is how the five-week sync outage went unnoticed), and only 14 days of
+n8n execution history. Notes could also be missed for good. The file trigger only fires while n8n is
+running, and the manual webhooks only took the newest note. The fixes follow common practice for small
+self-hosted apps, adapted to n8n. Each one was tested on the live server.
+
+- **Level-triggered sweep.** The file event is only a hint. Every trigger, plus a new 30-minute
+  schedule, runs the same steps: list `Index Inbox/` and research the oldest note without a
+  `Researched:` backlink. The backlink in the vault is the source of truth, so a missed event is caught
+  on the next sweep. `Watch Inbox/` stays opt-in: only its webhook researches it, newest note first.
+- **Lock.** n8n has no per-workflow concurrency limit, and the instance-wide
+  `N8N_CONCURRENCY_PRODUCTION_LIMIT` would also queue unrelated workflows. Instead, **Acquire Run Lock**
+  updates the single row of the `pebble_research_lock` data table where `owner` is empty or the lease
+  has expired. On Postgres, n8n runs this as one `UPDATE … WHERE … RETURNING` statement
+  (`data-table-rows.repository.js`), so only one run gets a row back. Tested by holding the lock in a
+  second workflow: the research run stopped at the lock with no output. The lease lasts 35 minutes, and
+  the workflow's execution timeout is 30 minutes, so a run that dies can't hold the lock for long.
+  On SQLite, n8n reads the matching rows before updating them, and this is untested.
+- **Attempt limit.** `pebble_research_notes` counts attempts per note. After 3 failed attempts, the
+  sweep skips the note and the watchdog reports it, so a note that always fails can't burn tokens every
+  30 minutes.
+- **Check the result, not the agent's report.** In one test run, the agent decided the search results
+  were noise, replied *"I'll write the note from the few solid anchors found…"* and stopped without
+  calling a tool. n8n counted it as a success. The workflow now reads the original note back from disk,
+  and only a note with a backlink is marked done. Anything else goes down the failure path. The prompt
+  now also says never to end a turn with only a plan.
+- **Alerts.** `Pebble Research → Alerts` (Error Trigger → ntfy) is the error workflow of the research
+  and watchdog workflows. `Pebble Research → Watchdog` checks credits and note states every 6 hours and
+  sends an OK summary at 09:05. `scripts/pipeline-healthcheck.sh` runs from cron on the host. With only
+  ntfy and no outside monitor, a full server outage can't send an alert. A missing morning summary is
+  the signal.
+- **Pinning.** Every image now has an exact tag (or a digest where upstream has no version tags), and
+  every package in the two Dockerfiles has an exact version. `mcp-searxng` is pinned to a fixed upstream
+  commit. `obsidian-mcp` is installed at build time instead of with `npx -y obsidian-mcp@2` on every
+  start, so a start needs no npm access, and a new release can't silently rename the tools the workflow
+  filters on. Renovate (`renovate.json`) opens PRs for new versions.
+
+Gotchas found while building this:
+
+- **Bing in SearXNG returns the same off-topic results for different queries** on this server. Five
+  different octopus questions all returned "Octopus – Wikipedia", "Octopus Energy" and Polish
+  Wikipedia. That's worse than no results, because the agent trusts them. Bing is disabled, Yahoo is
+  enabled, and `search.default_lang` is `en` (with `auto`, results came back in a Polish locale).
+  Test a new engine with real agent queries and `&engines=<name>` before you enable it.
+- **`$execution.mode` is `test` for a run started from the editor or the MCP connector**, not `manual`.
+  Check `$execution.mode !== 'production'` to detect a manual run.
+- **The MinIO image has no `find` (or `sed`).** The first version of the sync check ran `find` inside the
+  container, got nothing back, and reported a false sync failure. The script now reads the bucket
+  directory on the host side of MinIO's `/data` bind mount.
+- **Top-level node notes still can't be edited through the MCP connector** (see the section above), so
+  the live webhook nodes keep their old notes. The notes in the exported workflow JSON are current.

@@ -6,6 +6,8 @@
 use_default_settings: true
 
 search:
+  # mcp-searxng sends no language, and "auto" gave Polish-locale results on this server.
+  default_lang: "en"
   formats:
     - html
     - json # required: mcp-searxng queries /search?format=json
@@ -19,14 +21,18 @@ server:
   # `sed -i "s/ultrasecretkey/$(openssl rand -hex 32)/" docker/searxng/settings.yml`
   secret_key: "ultrasecretkey"
 
-# Engine overrides. During a burst of agent searches, DuckDuckGo showed a CAPTCHA on every query, and
-# Wikidata timed out at 3 s and only adds infobox text, so both are disabled. Bing is enabled to spread
-# queries over a third web engine next to Brave and Google CSE. See docs/TROUBLESHOOTING.md ("Agent run
-# timed out after search engines blocked it").
+# Engine overrides (tested 2026-11-07 with real agent queries; see docs/TROUBLESHOOTING.md):
+# - DuckDuckGo: CAPTCHA on every query from this server. Qwant: CAPTCHA. Google (not CSE): access denied.
+# - Bing: returns the same off-topic results for different queries (for example "Octopus Energy" for
+#   every octopus question), which is worse than no results because the agent trusts them.
+# - Wikidata: 3-second timeouts and only infobox text.
+# - Yahoo: relevant results, enabled to back up Google CSE and Brave (Brave rate-limits bursts).
 engines:
   - name: duckduckgo
     disabled: true
+  - name: bing
+    disabled: true
   - name: wikidata
     disabled: true
-  - name: bing
+  - name: yahoo
     disabled: false

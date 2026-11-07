@@ -95,7 +95,7 @@ project lets you dictate notes from a Pebble watch straight into a `Watch Inbox/
 project is deliberately decoupled from this one (own n8n workflow, no AI in its own save path), so
 nothing automatically researches those notes. Rather than add a second automatic file-watcher (which
 would research *every* dictated note, not just ones you actually want researched), this is a **webhook**
-you call yourself, which researches whichever note in `Watch Inbox/` is currently newest. It shares the
+you call yourself, which researches the newest `Watch Inbox/` note that has no backlink yet. It shares the
 same downstream `Research Agent`, tools, and note-writing logic as the Index Inbox trigger — see
 "Workflow logic" below for how the two branches converge. `docs/SETUP.md` Phase 6 covers setup, including
 one real permission gotcha the two projects sharing a vault mirror can hit — see `docs/TROUBLESHOOTING.md`.
@@ -185,6 +185,12 @@ live round-trip tool calls (not just a handshake check). Key findings:
   **Resolved in `searxng-service` (see the table below): not reused** — turned out to be an internal
   piece of n8n's own sandbox feature, not a general-purpose instance.
 
+**Since 2026-11-07, the file event is only a hint.** A 30-minute schedule and every other trigger run
+the same sweep: take the run lock, list the inbox, and research the oldest `Index Inbox/` note without a
+`Researched:` backlink (up to 5 per run). The backlink in the vault is the source of truth, so a note
+that arrives while n8n is down or restarting is still picked up. See "Reliability" in
+`docs/TROUBLESHOOTING.md` for the lock, the 3-attempt limit, the result check and the alerts.
+
 ## Workflow logic (n8n)
 
 **✅ Built, imported, activated, and e2e-tested (`n8n-workflow-trigger`, `n8n-workflow-agent`,
@@ -193,6 +199,12 @@ importing it into a real `n8n` instance (`n8n import:workflow`) and exporting it
 every node/connection round-tripped intact, then activating it and running a real note through the
 whole pipeline. The `OpenRouter Chat Model` node's credential ships intentionally unset — attach your
 own after import (see `docs/SETUP.md` Phase 4).
+
+> [!NOTE]
+> Steps 1–3 below describe the original design. Since 2026-11-07, all four triggers feed **Acquire Run
+> Lock → List Inbox Notes → Extract Note Text → Get Note States → Pick Next Note**, and **Pick Next
+> Note** computes `notePath` from the listed file's directory. After the agent, **Read Note Back**
+> checks for the backlink before **Mark Note Done**. Steps 4–5 are unchanged.
 
 1. **Local File Trigger** (`Watch Index Inbox`) — watches `/vault-mirror/Index Inbox` (the vault mirror,
    bind-mounted **read-only** into the `n8n` container itself — a real edit to n8n's own shared

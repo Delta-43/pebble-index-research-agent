@@ -1,0 +1,53 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "docker:pinDigests"],
+  "timezone": "Europe/Warsaw",
+  "schedule": ["before 9am on monday"],
+  "prConcurrentLimit": 5,
+  "labels": ["dependencies"],
+  "packageRules": [
+    {
+      "description": "This repo's own images are built by .github/workflows/docker-publish.yml from the Dockerfiles here, so Renovate tracks the Dockerfile contents instead.",
+      "matchPackageNames": ["ghcr.io/delta-43/**"],
+      "enabled": false
+    },
+    {
+      "description": "SearXNG tags look like 2026.11.2-cccbc9e15: a date version plus a commit hash.",
+      "matchDatasources": ["docker"],
+      "matchPackageNames": ["docker.io/searxng/searxng", "searxng/searxng"],
+      "versioning": "regex:^(?<major>\\d+)\\.(?<minor>\\d+)\\.(?<patch>\\d+)-[0-9a-f]+$"
+    },
+    {
+      "description": "mcp-proxy 0.12.0 is incompatible with the mcp 2.x API (see docs/TROUBLESHOOTING.md).",
+      "matchDatasources": ["pypi"],
+      "matchPackageNames": ["mcp"],
+      "allowedVersions": "<2"
+    },
+    {
+      "description": "obsidian-mcp tool names are part of the n8n workflow's tool filter, so a major bump needs a manual check.",
+      "matchDatasources": ["npm"],
+      "matchPackageNames": ["obsidian-mcp"],
+      "matchUpdateTypes": ["major"],
+      "labels": ["dependencies", "check-tool-names"]
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Versions pinned as Dockerfile ARGs with a '# renovate:' comment on the line above.",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>[a-z-]+) depName=(?<depName>\\S+)\\s+ARG \\w+=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "A git dependency pinned to a commit on a branch.",
+      "managerFilePatterns": ["/(^|/)Dockerfile$/"],
+      "matchStrings": [
+        "# renovate: datasource=git-refs depName=(?<depName>\\S+) currentValue=(?<currentValue>\\S+)\\s+ARG \\w+=(?<currentDigest>[0-9a-f]{40})"
+      ],
+      "datasourceTemplate": "git-refs"
+    }
+  ]
+}
