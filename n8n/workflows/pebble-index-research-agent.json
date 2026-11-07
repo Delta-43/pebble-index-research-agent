@@ -79,11 +79,11 @@
       "position": [300, 0],
       "parameters": {
         "promptType": "define",
-        "text": "=New Index note detected.\n\nVault-relative path: {{ $json.notePath }}\n\nTranscript:\n{{ $json.noteText }}",
+        "text": "=New Index note detected.\n\nToday's date: {{ $now.toFormat('yyyy-MM-dd') }}\nVault-relative path: {{ $json.notePath }}\n\nTranscript:\n{{ $json.noteText }}",
         "hasOutputParser": false,
         "options": {
-          "systemMessage": "You are a research assistant for a voice-note pipeline. Each run gives you the vault-relative path and full transcript of one short voice note, transcribed from a Pebble Index ring recording. The transcript is often a fragment, a question, or a passing thought — infer the real research intent from context rather than taking it too literally.\n\nDo the following, in order:\n1. Read the transcript and identify the core research question(s) or topic(s) it implies.\n2. Use the `search` tool to gather relevant, current information from the web. Call it as many times as needed with different queries to cover the topic well — don't stop at one query if the topic has multiple angles.\n3. Synthesize your findings into a well-structured Markdown research note: a few clear sections, concrete information (not vague generalities), and reasonable length — useful and focused, not exhaustive padding.\n4. Choose a clear, descriptive title for the note. Do not just reuse the transcript text as the title.\n5. Choose 2-5 relevant topical tags (lowercase, hyphenated, no spaces). Then add two fixed tags that go on every note this workflow creates, regardless of topic: `interests` and `questions`.\n6. Call `obsidian_create_note` ONCE to save the note into the `Research/` folder (e.g. `Research/<your title>.md`). Include YAML frontmatter with a `tags` list containing both the topical tags from step 5 AND the two fixed tags (`interests`, `questions`) together, a `source` field set to the exact original note path given above, and a `created` field set to today's date. Get the full content right in this single call — do not plan to revise it afterward.\n7. After creating the note, call `obsidian_edit_note` ONCE on the original note (the exact path given above) to append a short backlink, e.g. a new line `Researched: [[<research note title>]]`.\n8. STOP. Do not call `obsidian_read_note`, `obsidian_edit_note`, or any other tool on the research note after step 6 — it is already correct and final the moment you create it. Re-reading or re-editing it is unnecessary and risks overwriting your own good work with a fragment. Once step 7 is done, immediately respond with your final answer and make no further tool calls.\n\nRespond with one short sentence confirming what you created and its path — no need to repeat the full note content back.",
-          "maxIterations": 20
+          "systemMessage": "You are a research assistant for a voice-note pipeline. Each run gives you the vault-relative path and transcript of one short voice note from a Pebble Index ring. The transcript is often a fragment, a question, or a passing thought — infer the real research intent rather than taking it too literally.\n\nTools: `search` (web search, returns the top 3 results per query), `obsidian_create_note` and `obsidian_edit_note`. The vault id is always `notes`: pass it as `vault` to both Obsidian tools. Do not look it up.\n\nYou have a small, fixed number of turns, and every turn resends the whole conversation. Make each turn count.\n\n1. Identify the core research question(s) in the transcript.\n2. Privately brainstorm the distinct angles this topic could be researched from, then pick the 5 most useful (fewer if the topic is narrow — don't pad). Keep the rest for \"Further Research\".\n3. Search in ONE turn: send all searches for the selected angles together as parallel `search` calls in a single response, one concise query per angle. Never send one search per turn.\n4. Optionally, ONE follow-up turn of at most 3 parallel searches, only for angles whose results were thin or contradictory. Then stop searching for good: at most 8 searches in total.\n5. Empty results: if a search returns \"No results found\", reword it at most once. If most searches in a turn come back empty, the search service is failing: stop searching, write the note from what you found plus your own knowledge, and say in the note which facts could not be checked online.\n6. Write the note in Markdown: a few clear sections with concrete facts (numbers, names, source URLs), focused and not padded. End with a short \"Further Research\" section listing the unselected angles as open questions.\n7. Title: clear and descriptive, not the transcript text. Tags: 2-5 topical tags (lowercase, hyphenated, no spaces) plus the two fixed tags `interests` and `questions`.\n8. Call `obsidian_create_note` ONCE with path `Research/<title>.md` and the full content, including YAML frontmatter: `tags` (topical and fixed tags together), `source` (the exact original note path given above) and `created` (today's date, given above). Get it right in this one call.\n9. Then call `obsidian_edit_note` ONCE on the original note path with operation `append`. The content is a line break followed by `Researched: [[<title>]]` — use a real line break, never the two characters backslash and n.\n10. STOP. Make no further tool calls: never read, re-edit or re-create the research note — it is final the moment you create it. Reply with one short sentence naming the note you created and its path.",
+          "maxIterations": 10
         }
       }
     },
@@ -95,7 +95,11 @@
       "position": [180, 260],
       "parameters": {
         "model": "openai/gpt-5-mini",
-        "options": {}
+        "options": {
+          "maxTokens": 8192,
+          "timeout": 120000,
+          "maxRetries": 2
+        }
       }
     },
     {
@@ -108,7 +112,8 @@
         "endpointUrl": "http://mcp-obsidian:8801/sse",
         "serverTransport": "sse",
         "authentication": "none",
-        "include": "all"
+        "include": "selected",
+        "includeTools": ["obsidian_create_note", "obsidian_edit_note"]
       }
     },
     {

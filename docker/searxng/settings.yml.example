@@ -18,3 +18,15 @@ server:
   # startup precondition now. Generate a real one as a one-time step after copying this file:
   # `sed -i "s/ultrasecretkey/$(openssl rand -hex 32)/" docker/searxng/settings.yml`
   secret_key: "ultrasecretkey"
+
+# Engine overrides. During a burst of agent searches, DuckDuckGo showed a CAPTCHA on every query, and
+# Wikidata timed out at 3 s and only adds infobox text, so both are disabled. Bing is enabled to spread
+# queries over a third web engine next to Brave and Google CSE. See docs/TROUBLESHOOTING.md ("Agent run
+# timed out after search engines blocked it").
+engines:
+  - name: duckduckgo
+    disabled: true
+  - name: wikidata
+    disabled: true
+  - name: bing
+    disabled: false
