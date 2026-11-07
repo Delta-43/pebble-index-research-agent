@@ -14,7 +14,7 @@ RUN apt-get update \
 ARG MCP_VERSION=1.30.0
 # renovate: datasource=pypi depName=mcp-proxy
 ARG MCP_PROXY_VERSION=0.12.0
-# renovate: datasource=git-refs depName=https://github.com/SecretiveShell/MCP-searxng currentValue=main
+# renovate: datasource=git-refs depName=https://github.com/SecretiveShell/MCP-searxng currentValue=master
 ARG MCP_SEARXNG_COMMIT=7aba5ed80656818132ebaff35bde50c9c6d757be
 RUN pip install --no-cache-dir "mcp==${MCP_VERSION}" "mcp-proxy==${MCP_PROXY_VERSION}" \
     "git+https://github.com/SecretiveShell/MCP-searxng.git@${MCP_SEARXNG_COMMIT}"
