@@ -76,6 +76,13 @@ remote from the Desktop and resetting `livesync-cli`. At the same time `livesync
 1.0.18 to **1.0.44** and pinned to the `1.0.44-cli` tag. Full write-up and the CLI reset procedure are in
 `docs/TROUBLESHOOTING.md`.
 
+**Agent timeout fixed and token use cut (2026-11-07)**: execution #53 failed with `Request timed out.`
+after search engines blocked SearXNG (DuckDuckGo CAPTCHA, Brave and Google CSE rate limits) and the agent
+kept rewording empty searches until its 20th model call hung for 10 minutes. Fixed in SearXNG's engine list,
+the agent prompt (batched parallel searches, stop on empty results, vault id and date given), the Obsidian
+MCP tool filter (2 of 12 tools), and the OpenRouter node (120 s timeout, 2 retries). The retry used 7 calls
+and 35,719 tokens instead of 20 calls and 158,590+. Full write-up in `docs/TROUBLESHOOTING.md`.
+
 Track work via the project's todo list (ask the user for the current SQL-backed todo state, or check
 for a synced task list if one has been added to this repo). As of this writing, the phase order is:
 

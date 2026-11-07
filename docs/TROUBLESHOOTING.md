@@ -427,3 +427,50 @@ editing a live, customized workflow):
   on which of two upstream triggers actually fired, without needing a separate Set node per branch.
 
 
+
+## Agent run timed out after search engines blocked it (2026-11-07)
+
+**What happened.** Execution #53 (note: "Do all animals have seven cervical vertebrae?") failed after
+11 minutes with `NodeOperationError: Request timed out.` in **Research Agent**. No research note was
+created. The execution trace showed this sequence:
+
+1. The first 5 searches returned results. The next 22 all returned `No results found`. The SearXNG logs
+   for that time show the cause: DuckDuckGo showed a CAPTCHA on every query, Brave and Google CSE
+   rate-limited the server (`suspended_time=180`), and Wikidata timed out at 3 seconds.
+2. The agent did not notice that the search service was failing. It reworded the same query again and
+   again (about 10 variants of "swan 25 cervical vertebrae"): 27 searches over 20 model calls.
+3. The 20th OpenRouter call never answered. It hit the node's default timeout after 600 seconds and
+   failed the whole run. That call was also the last one `maxIterations: 20` allowed, so the run would
+   most likely have failed on the iteration limit anyway.
+
+**Fixes.**
+
+- **SearXNG engines** (`docker/searxng/settings.yml`): DuckDuckGo and Wikidata are disabled, and Bing
+  is enabled. Mojeek and Startpage are not registered engines in the current SearXNG release, so a
+  `disabled: false` override for them does nothing. Check `/config` to see which engines are really
+  enabled after a change.
+- **Fewer model calls.** The system prompt now tells the agent to send all its searches in one turn as
+  parallel tool calls, with one optional follow-up turn and at most 8 searches in total. It also tells
+  the agent to stop searching when most searches in a turn come back empty, and to write the note from
+  what it has.
+- **Fewer tokens per call.** `obsidian-mcp` exposes 12 tools, and their schemas are about 17,600
+  characters. n8n sends every tool schema with every model call. **MCP: obsidian-mcp** now exposes only
+  `obsidian_create_note` and `obsidian_edit_note` (`include: selected`). The prompt gives the vault id
+  (`notes`, the `VAULT_NAME` default) and today's date, so the agent no longer calls
+  `obsidian_list_vaults` first.
+- **Model limits** (**OpenRouter Chat Model**): `timeout: 120000` and `maxRetries: 2`, so one stuck
+  request is retried after 2 minutes instead of failing the run after 10. Retry at the model node, not
+  with **Retry On Fail** on **Research Agent**: an agent-level retry runs every search again.
+  `maxTokens: 8192` caps a runaway answer.
+- **`maxIterations: 10`.** The normal plan needs about 5 model calls. 10 gives headroom, and it also
+  limits how many tokens a looping agent can spend.
+
+**Result.** The same note, retried as execution #54, succeeded in 37 seconds with 7 model calls and
+35,719 tokens. Run #53 had used 158,590 tokens in its 19 completed calls before it failed. The first
+call's prompt dropped from 5,361 to 1,674 tokens. The agent still sent 10 searches over 4 turns, so it
+does not always respect the batching rule exactly, but `maxIterations` limits the cost.
+
+**Gotcha: escaped line breaks in the prompt.** The first version of the new backlink step told the
+agent to append `` `\nResearched: [[<title>]]` ``. The agent copied the backslash and the `n` as two
+literal characters into the note. The prompt now asks for "a line break followed by
+`Researched: [[<title>]]`" instead.
