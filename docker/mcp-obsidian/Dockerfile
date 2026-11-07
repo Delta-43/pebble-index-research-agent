@@ -7,9 +7,21 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends python3 python3-pip inotify-tools \
     && rm -rf /var/lib/apt/lists/*
 
-# `mcp<2` is required: mcp-proxy 0.12.0 is incompatible with the `mcp` 2.x API despite its loose
-# `mcp>=1.27.1` constraint (see docs/TROUBLESHOOTING.md).
-RUN pip install --no-cache-dir --break-system-packages "mcp<2" mcp-proxy
+# Exact versions, bumped by Renovate PRs (see renovate.json). `mcp` must stay below 2.0: mcp-proxy
+# 0.12.0 is incompatible with the `mcp` 2.x API despite its loose `mcp>=1.27.1` constraint (see
+# docs/TROUBLESHOOTING.md).
+# renovate: datasource=pypi depName=mcp
+ARG MCP_VERSION=1.30.0
+# renovate: datasource=pypi depName=mcp-proxy
+ARG MCP_PROXY_VERSION=0.12.0
+RUN pip install --no-cache-dir --break-system-packages "mcp==${MCP_VERSION}" "mcp-proxy==${MCP_PROXY_VERSION}"
+
+# Installed at build time, not with `npx -y` at container start: a start then needs no npm registry
+# access, and a new obsidian-mcp release can't silently change the tool names the n8n workflow
+# filters on (`obsidian_create_note`, `obsidian_edit_note`).
+# renovate: datasource=npm depName=obsidian-mcp
+ARG OBSIDIAN_MCP_VERSION=2.0.1
+RUN npm install -g "obsidian-mcp@${OBSIDIAN_MCP_VERSION}" && npm cache clean --force
 
 # Configurable at `docker run`/compose time via env vars — no need to override the whole CMD to change
 # just one thing. VAULT_MOUNT is the *container-internal* mount point; point your bind mount at it
@@ -24,4 +36,4 @@ ENV VAULT_MOUNT=/vault
 # needs to read a note obsidian-mcp created. See docs/TROUBLESHOOTING.md. Since this container already
 # runs as root — the same owner as obsidian-mcp's writes — watch the vault and loosen every new file to
 # 644 the instant it lands, rather than patching the upstream library.
-ENTRYPOINT ["/bin/sh", "-c", "(inotifywait -m -r -e create,moved_to,close_write --format '%w%f' \"$VAULT_MOUNT\" 2>/dev/null | while IFS= read -r f; do [ -f \"$f\" ] && chmod 644 \"$f\" 2>/dev/null; done &) ; exec mcp-proxy --host 0.0.0.0 --port \"$MCP_PORT\" --pass-environment -- npx -y obsidian-mcp@2 serve --vault \"$VAULT_NAME=$VAULT_MOUNT\""]
+ENTRYPOINT ["/bin/sh", "-c", "(inotifywait -m -r -e create,moved_to,close_write --format '%w%f' \"$VAULT_MOUNT\" 2>/dev/null | while IFS= read -r f; do [ -f \"$f\" ] && chmod 644 \"$f\" 2>/dev/null; done &) ; exec mcp-proxy --host 0.0.0.0 --port \"$MCP_PORT\" --pass-environment -- obsidian-mcp serve --vault \"$VAULT_NAME=$VAULT_MOUNT\""]

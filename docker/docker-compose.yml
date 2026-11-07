@@ -58,7 +58,8 @@ services:
   # mcp-searxng); copy it to `settings.yml` (gitignored, holds a real generated secret_key — see
   # docs/SETUP.md Phase 1) before first deploy.
   searxng:
-    image: docker.io/searxng/searxng:latest
+    # Pinned to an exact release; Renovate opens a PR for each new one (see renovate.json).
+    image: docker.io/searxng/searxng:2026.11.2-cccbc9e15
     container_name: searxng
     restart: unless-stopped
     healthcheck:

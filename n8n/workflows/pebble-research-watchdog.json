@@ -1,0 +1,221 @@
+{
+  "name": "Pebble Research → Watchdog",
+  "nodes": [
+    {
+      "id": "a8f38d7d-d0c2-414a-a283-a95bf8fc28c4",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 3,9,15,21 * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a4e28bae-d0e4-46f5-9670-ce9176ebbf44",
+      "name": "Check OpenRouter Credits",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://openrouter.ai/api/v1/credits",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openRouterApi",
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "credentials": {
+        "openRouterApi": {
+          "name": "OpenRouter account"
+        }
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "9711575f-18eb-4eb3-b46e-8e25e90f3209",
+      "name": "List Inbox Notes",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "fileSelector": "/vault-mirror/{Index Inbox,Watch Inbox}/*.md",
+        "options": {}
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "4f1dd7cb-deb5-41f4-a370-3d5c3bc81908",
+      "name": "Extract Note Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "operation": "text",
+        "destinationKey": "noteText",
+        "options": {}
+      },
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "863215a0-ff99-4b0c-84df-30fd53aed386",
+      "name": "Get Note States",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "pebble_research_notes"
+        },
+        "returnAll": true
+      },
+      "executeOnce": true,
+      "alwaysOutputData": true
+    },
+    {
+      "id": "a57d9a28-23af-42e7-9fa7-380b626d0747",
+      "name": "Collect Problems",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const MAX_ATTEMPTS = 3;\nconst LOW_CREDITS_USD = 2;\nconst problems = [];\n\nconst cr = $('Check OpenRouter Credits').first()?.json ?? {};\nlet remaining = null;\nif (cr.data && typeof cr.data.total_credits === 'number') {\n  remaining = cr.data.total_credits - (cr.data.total_usage ?? 0);\n  if (remaining < LOW_CREDITS_USD) problems.push(`OpenRouter credits are low: $${remaining.toFixed(2)} left.`);\n} else {\n  problems.push(`Could not read OpenRouter credits: ${String(cr.error?.message ?? cr.error ?? 'no data').slice(0, 200)}`);\n}\n\nconst files = $('List Inbox Notes').all();\nconst texts = $('Extract Note Text').all();\nconst notes = {};\ntexts.forEach((item, i) => {\n  const src = files[item.pairedItem?.item ?? i] ?? files[i];\n  const bin = src?.binary?.data ?? {};\n  const dir = (bin.directory ?? '').replace(/^\\/vault-mirror\\/?/, '');\n  if (!dir || !bin.fileName) return;\n  notes[dir + '/' + bin.fileName] = { text: item.json.noteText ?? '', fileName: bin.fileName, dir };\n});\nif (Object.keys(notes).length === 0) problems.push('Could not list any inbox notes in the vault mirror.');\n\nconst rows = {};\nfor (const r of $input.all()) if (r.json.notePath) rows[r.json.notePath] = r.json;\n\nconst dayAgo = $now.minus({ days: 1 });\nlet researched24h = 0;\nfor (const r of Object.values(rows)) {\n  if (r.status === 'done' && r.updatedAt && DateTime.fromISO(r.updatedAt) > dayAgo) researched24h += 1;\n}\nfor (const [path, n] of Object.entries(notes)) {\n  const hasBacklink = n.text.includes('Researched:');\n  const row = rows[path];\n  if (hasBacklink) continue;\n  if (row && (row.attempts ?? 0) >= MAX_ATTEMPTS && row.status !== 'done') {\n    problems.push(`Gave up after ${row.attempts} attempts: ${path} (${String(row.lastError ?? '').slice(0, 120)})`);\n  } else if (row && row.status === 'done') {\n    problems.push(`Marked done but has no backlink: ${path}`);\n  } else if (n.dir === 'Index Inbox') {\n    // Watch Inbox/ is opt-in (researched only when its webhook fires), so only Index Inbox/ notes\n    // are expected to be researched automatically.\n    const m = n.fileName.match(/^(\\d{4}-\\d{2}-\\d{2})/);\n    if (m && DateTime.fromISO(m[1]) < $now.minus({ days: 1 })) problems.push(`Waiting for research for over a day: ${path}`);\n  }\n}\n\n// Always report: a success ping when nothing is wrong, a /fail ping with the problems otherwise.\n// Healthchecks.io also alerts if these pings stop, so a dead watchdog can't go unnoticed.\nconst summary = `${researched24h} note${researched24h === 1 ? '' : 's'} researched in the last 24 hours` + (remaining === null ? '.' : `, $${remaining.toFixed(2)} OpenRouter credit left.`);\nreturn [{ json: { ok: problems.length === 0, body: (problems.length ? problems.join('\\n') + '\\n\\n' : '') + summary } }];"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "b8e6c0bd-244b-44ab-bee0-f19b3d5cf99c",
+      "name": "Report To Healthchecks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://hc-ping.com/YOUR-PEBBLE-WATCHDOG-CHECK-UUID{{ $json.ok ? '' : '/fail' }}",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.body }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Check OpenRouter Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check OpenRouter Credits": {
+      "main": [
+        [
+          {
+            "node": "List Inbox Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Inbox Notes": {
+      "main": [
+        [
+          {
+            "node": "Extract Note Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Note Text": {
+      "main": [
+        [
+          {
+            "node": "Get Note States",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Note States": {
+      "main": [
+        [
+          {
+            "node": "Collect Problems",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Problems": {
+      "main": [
+        [
+          {
+            "node": "Report To Healthchecks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/Warsaw",
+    "executionTimeout": 300
+  },
+  "pinData": {}
+}

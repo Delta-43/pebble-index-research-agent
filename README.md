@@ -95,6 +95,7 @@ Customizable (see [Reconfiguring things later](docs/SETUP.md#reconfiguring-thing
 | Orchestration | [n8n](https://n8n.io/) | Local File Trigger + AI Agent workflow (assumed already running) |
 | Obsidian tools | [`StevenStavrakis/obsidian-mcp`](https://github.com/StevenStavrakis/obsidian-mcp) | MCP server for reading/writing/tagging notes directly on disk |
 | Web research | [`SecretiveShell/MCP-searxng`](https://github.com/SecretiveShell/MCP-searxng) + [SearXNG](https://github.com/searxng/searxng) | MCP server exposing web search backed by a self-hosted meta search engine |
+| Alerts | [Healthchecks.io](https://healthchecks.io/) | Dead man's switch checks for the sweep, a 6-hourly watchdog and a host health check, with alerts for failed runs (see `docs/SETUP.md` Phase 7) |
 | stdio→HTTP bridge | [`sparfenyuk/mcp-proxy`](https://github.com/sparfenyuk/mcp-proxy) | Exposes the (stdio) MCP servers above as SSE endpoints n8n can call |
 
 ## 📊 Project status

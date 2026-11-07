@@ -199,7 +199,8 @@ to the file is not allowed.` on every run. See
 [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#n8n-workflow-build-n8n-workflow-trigger-n8n-workflow-agent)
 for exactly what each failure looks like if you hit it anyway.
 
-**Step 2 — import the workflow:**
+**Step 2 — import the workflow.** First create the two data tables the workflow uses (Phase 7,
+step 1). Without them, the import works but every run fails at **Acquire Run Lock**.
 
 ```bash
 docker cp n8n/workflows/pebble-index-research-agent.json <your-n8n-container-name>:/tmp/wf.json
@@ -249,7 +250,7 @@ printf -- '---\ntags: [index, index_note]\n---\n\nWhat is the best way to brew p
     "cat > '/vault/<your folder name>/test-note.md'"
 ```
 
-Within a few seconds, check:
+Within a few seconds, check (if the file trigger missed the note, the 30-minute sweep picks it up):
 
 - **n8n's Executions list** — a new run of "Pebble Index → Research Note" should appear.
 - **Your vault's `Research/` folder** — a new, titled, tagged note with a `source` link back to the
@@ -266,12 +267,13 @@ Within a few seconds, check:
 If you've also deployed [`pebble-watch-obsidian-notes`](https://github.com/Delta-43/pebble-watch-obsidian-notes)
 ("Delta Notes" — a separate, deliberately decoupled project that lets you dictate notes from a Pebble
 watch straight into your vault's `Watch Inbox/` folder), you can add a second, **manually-fired** trigger
-to this same workflow: a webhook that researches whatever the *newest* note in `Watch Inbox/` is, the
-moment you call it. It shares the same `Research Agent`, tools, and note-writing logic as the automatic
-Index Inbox trigger — the only difference is how it starts and which folder it reads from.
+to this same workflow: a webhook that researches the newest `Watch Inbox/` note that has no backlink
+yet, the moment you call it. `Watch Inbox/` is opt-in by design: the 30-minute sweep and the file
+trigger only research `Index Inbox/`, so quick dictated reminders never cost a research run. The
+webhook shares the same lock, retry limit, result check and alerts as the automatic path.
 
 This is already included in `n8n/workflows/pebble-index-research-agent.json` (the **Watch Inbox
-(Manual)** node and the three nodes that select the newest file). Nothing extra to import — just:
+(Manual)** node). Nothing extra to import — just:
 
 **Step 1 — create a Header Auth credential.** The webhook ships with `authentication: headerAuth` but no
 credential attached (same "ships unset" pattern as the OpenRouter credential in Phase 4). In the n8n
@@ -280,8 +282,9 @@ editor: **Settings → Credentials → New → Header Auth**, then pick a header
 Inbox (Manual)** node and attach this credential.
 
 **Step 2 — check the folder name.** This project's own vault uses `Watch Inbox/` for Delta Notes' notes
-(that project's own default) — if yours differs, edit the **List Watch Inbox Notes** node's glob from
-`/vault-mirror/Watch Inbox/*.md` to match. Nothing else needs to change.
+(that project's own default). If yours differs, change the folder name in two places: the **List Inbox
+Notes** node's glob (`/vault-mirror/{Index Inbox,Watch Inbox}/*.md`) and the `FOLDER` line in the
+**Pick Next Note** Code node.
 
 **Step 3 — publish.** Unlike the Index Inbox trigger, a webhook doesn't need an n8n restart to register
 after publishing — just Publish/Activate the workflow as usual.
@@ -327,6 +330,83 @@ running — check n8n's Executions list for the run.
   - **Windows**: a `.bat`/`.ps1` script (curl ships with Windows 10+) pinned to the taskbar, or Windows
     11's built-in **Power Automate Desktop** for a no-script button.
   - **Linux**: a shell script + a `.desktop` launcher, or bound to a keyboard shortcut.
+
+## Phase 7 — Alerts, health checks and update PRs
+
+Without this phase, a failed run or a stopped sync is silent: you only find out by checking n8n. This
+phase uses [Healthchecks.io](https://healthchecks.io) (the free plan is enough), which runs off your
+server. Each part of the pipeline pings a check. When a part reports a failure, or its pings stop,
+Healthchecks.io notifies you by email, or by phone push or chat if you add those under
+**Integrations**. Because the alerting runs elsewhere, it also catches the whole server going down.
+See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#reliability-sweep-lock-alerts-and-pinning-2026-11-07) for
+why each part exists.
+
+**Step 1 — create the two data tables** (n8n editor → **Overview → Data tables → Create**). The
+research workflow finds them by name:
+
+| Table | Columns |
+|---|---|
+| `pebble_research_lock` | `lockName` (string), `owner` (string), `leaseUntil` (date) |
+| `pebble_research_notes` | `notePath` (string), `status` (string), `attempts` (number), `lastExecutionId` (string), `lastError` (string) |
+
+Add one row to `pebble_research_lock`: `lockName` = `research`, `owner` empty, `leaseUntil` any past
+date. The research workflow uses it as a lock, so only one run works at a time. The lock is safe
+against two runs starting in the same instant on Postgres (tested). On SQLite this is untested.
+
+**Step 2 — create three checks** in a Healthchecks.io project (**Add Check**, then set the period
+and grace time):
+
+| Check | Period | Grace | Pinged by |
+|---|---|---|---|
+| `pebble-research` | 30 minutes | 30 minutes | Research workflow at the end of every sweep; `/fail` from the alerts workflow when a run fails |
+| `pebble-watchdog` | 6 hours | 1 hour | Watchdog workflow; `/fail` when it finds a problem |
+| `pebble-host` | 15 minutes | 15 minutes | `scripts/pipeline-healthcheck.sh` from cron; `/fail` when a host check fails |
+
+Each check has a ping URL like `https://hc-ping.com/<uuid>`. Treat these like passwords. Put the
+`pebble-host` URL in `docker/.env` as `HEALTHCHECKS_HOST_PING_URL`.
+
+**Step 3 — import the alerts and watchdog workflows**, the same way as Phase 4 step 2:
+`n8n/workflows/pebble-research-alerts.json` and `n8n/workflows/pebble-research-watchdog.json`. Replace
+the placeholder ping URLs with your own:
+
+- `YOUR-PEBBLE-RESEARCH-CHECK-UUID`: in the research workflow's **Ping Healthchecks** node and in the
+  alerts workflow.
+- `YOUR-PEBBLE-WATCHDOG-CHECK-UUID`: in the watchdog's **Report To Healthchecks** node and in the
+  alerts workflow.
+
+In the watchdog, attach your OpenRouter credential to **Check OpenRouter Credits**, and change its
+timezone in **Settings** if you're not in Europe/Warsaw.
+
+**Step 4 — connect them.** Publish **Pebble Research → Alerts**. Then open **Settings** on both the
+research workflow and the watchdog, set **Error Workflow** to *Pebble Research → Alerts*, and publish
+both. Run the watchdog once from the editor: the `pebble-watchdog` check should turn green.
+
+What you get:
+
+- **An alert for every failed run**, with the error, the node and a link to the execution in the ping
+  body. The next clean sweep marks the check up again.
+- **A watchdog every 6 hours** that reports low OpenRouter credit (under $2), notes that failed 3
+  times, notes marked done without a backlink, and `Index Inbox/` notes waiting over a day.
+- **An alert when pings stop**: n8n is down, the sweep or watchdog is broken, cron stopped, or the
+  server is off.
+
+**Step 5 — schedule the host check.** `scripts/pipeline-healthcheck.sh` covers what n8n can't check
+about itself: whether n8n and the other containers are running and healthy, whether SearXNG returns
+results, and whether `livesync-cli` uploaded the newest research note to MinIO. Add it to your
+crontab (`crontab -e`):
+
+```cron
+*/15 * * * * /path/to/repo/scripts/pipeline-healthcheck.sh >> $HOME/.pebble-pipeline-healthcheck.log 2>&1
+```
+
+It reads `HEALTHCHECKS_HOST_PING_URL` and `VAULT_MIRROR_PATH` from `docker/.env`, and the container
+names from the top of the script. Run it by hand first: it prints `OK` or the problems it found.
+
+**Step 6 — turn on update PRs.** Every image and package is pinned to an exact version, so nothing
+changes under you. To hear about new versions, install the free [Renovate](https://github.com/apps/renovate)
+GitHub app on your fork. `renovate.json` makes it open PRs on Monday mornings for the Dockerfiles,
+`docker/docker-compose.yml` and the pinned packages. Renovate only sees files in this repo, so pin
+your own n8n, MinIO and tunnel compose files by hand.
 
 ## Reconfiguring things later
 

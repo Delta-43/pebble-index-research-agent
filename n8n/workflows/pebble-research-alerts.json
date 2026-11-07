@@ -1,0 +1,58 @@
+{
+  "name": "Pebble Research → Alerts",
+  "nodes": [
+    {
+      "id": "3e894f9a-499b-43f6-840f-7e106db3b17d",
+      "name": "When A Pipeline Run Fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "bdb2b450-e7a4-4a40-8808-f6c342683a9a",
+      "name": "Report Failure To Healthchecks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ ($json.workflow?.name ?? '').includes('Watchdog') ? 'https://hc-ping.com/YOUR-PEBBLE-WATCHDOG-CHECK-UUID' : 'https://hc-ping.com/YOUR-PEBBLE-RESEARCH-CHECK-UUID' }}/fail",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'Run failed: ' + ($json.workflow?.name ?? 'unknown workflow') + '\\nError: ' + ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'no error message') + '\\nNode: ' + ($json.execution?.lastNodeExecuted ?? $json.trigger?.error?.node?.name ?? 'unknown') + '\\nExecution: ' + ($json.execution?.url ?? 'not saved') }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    }
+  ],
+  "connections": {
+    "When A Pipeline Run Fails": {
+      "main": [
+        [
+          {
+            "node": "Report Failure To Healthchecks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
