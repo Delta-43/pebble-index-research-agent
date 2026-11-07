@@ -5,22 +5,19 @@
 #
 # It checks what n8n cannot check about itself: whether n8n and the other containers are running
 # and healthy, whether SearXNG returns results, and whether livesync-cli uploaded the newest
-# research note to MinIO. Problems go to the ntfy topic in docker/.env (NTFY_TOPIC). A problem is
-# sent once, then again every 6 hours while it lasts, and a recovery message follows when all
-# checks pass again. See docs/SETUP.md ("Alerts and health checks").
-#
-# Limit: this runs on the same server as the pipeline, so it can't report the whole server going
-# down. A missing 09:05 summary from the n8n watchdog is the signal for that.
+# research note to MinIO. Every run pings the Healthchecks.io check in docker/.env
+# (HEALTHCHECKS_HOST_PING_URL): a success ping when all checks pass, or a /fail ping with the
+# problems as the body. Healthchecks.io sends the notifications, and it also alerts when the pings
+# stop, for example when cron or the whole server is down. See docs/SETUP.md Phase 7.
 set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ENV_FILE="${ENV_FILE:-$SCRIPT_DIR/../docker/.env}"
 if [ -f "$ENV_FILE" ]; then
-  NTFY_TOPIC="${NTFY_TOPIC:-$(grep -E '^NTFY_TOPIC=' "$ENV_FILE" | tail -1 | cut -d= -f2-)}"
+  HEALTHCHECKS_HOST_PING_URL="${HEALTHCHECKS_HOST_PING_URL:-$(grep -E '^HEALTHCHECKS_HOST_PING_URL=' "$ENV_FILE" | tail -1 | cut -d= -f2-)}"
   VAULT_MIRROR_PATH="${VAULT_MIRROR_PATH:-$(grep -E '^VAULT_MIRROR_PATH=' "$ENV_FILE" | tail -1 | cut -d= -f2-)}"
 fi
-: "${NTFY_TOPIC:?Set NTFY_TOPIC in docker/.env}"
-NTFY_URL="${NTFY_URL:-https://ntfy.sh}"
+: "${HEALTHCHECKS_HOST_PING_URL:?Set HEALTHCHECKS_HOST_PING_URL in docker/.env}"
 VAULT_MIRROR_PATH="${VAULT_MIRROR_PATH:-}"
 # Containers that must be running. Names in HEALTHY_CONTAINERS must also report "healthy".
 RUNNING_CONTAINERS="${RUNNING_CONTAINERS:-livesync-cli searxng mcp-obsidian mcp-searxng n8n minio cf-minio-tunnel}"
@@ -31,9 +28,6 @@ MINIO_BUCKET="${MINIO_BUCKET:-obsidian-bucket}"
 # host side of MinIO's /data bind mount.
 MINIO_BUCKET_DIR="${MINIO_BUCKET_DIR:-$(docker inspect "$MINIO_CONTAINER" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)/$MINIO_BUCKET}"
 SYNC_GRACE_SECONDS="${SYNC_GRACE_SECONDS:-900}"
-REALERT_SECONDS="${REALERT_SECONDS:-21600}"
-STATE_DIR="${STATE_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/pebble-pipeline}"
-mkdir -p "$STATE_DIR"
 
 problems=()
 
@@ -76,28 +70,16 @@ if [ -n "$VAULT_MIRROR_PATH" ] && [ -d "$VAULT_MIRROR_PATH/Research" ]; then
   fi
 fi
 
-push() { # title, message, priority, tags
-  curl -fsS -m 15 -o /dev/null -H "Title: $1" -H "Priority: $3" -H "Tags: $4" -d "$2" "$NTFY_URL/$NTFY_TOPIC" \
-    || echo "$(date -Is) ntfy push failed: $1" >&2
+ping() { # path suffix ("" or "/fail"), body
+  curl -fsS -m 10 --retry 3 -o /dev/null --data-raw "$2" "${HEALTHCHECKS_HOST_PING_URL}$1" \
+    || echo "$(date -Is) Healthchecks.io ping failed" >&2
 }
 
-now=$(date +%s)
 if [ ${#problems[@]} -gt 0 ]; then
   message=$(printf '%s\n' "${problems[@]}")
-  digest=$(printf '%s' "$message" | sha256sum | cut -c1-16)
-  last_digest=$(cat "$STATE_DIR/last_digest" 2>/dev/null || true)
-  last_sent=$(cat "$STATE_DIR/last_sent" 2>/dev/null || echo 0)
-  if [ "$digest" != "$last_digest" ] || [ $((now - last_sent)) -ge "$REALERT_SECONDS" ]; then
-    push "Pebble pipeline: server check failed" "$message" 4 warning
-    echo "$digest" > "$STATE_DIR/last_digest"
-    echo "$now" > "$STATE_DIR/last_sent"
-  fi
+  ping /fail "$message"
   echo "$message"
   exit 1
 fi
-
-if [ -s "$STATE_DIR/last_digest" ]; then
-  push "Pebble pipeline: server checks pass again" "All server checks pass." 2 white_check_mark
-  rm -f "$STATE_DIR/last_digest" "$STATE_DIR/last_sent"
-fi
+ping "" "All server checks pass."
 echo "OK"

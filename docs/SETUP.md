@@ -334,10 +334,12 @@ running — check n8n's Executions list for the run.
 ## Phase 7 — Alerts, health checks and update PRs
 
 Without this phase, a failed run or a stopped sync is silent: you only find out by checking n8n. This
-phase sends problems to your phone through [ntfy](https://ntfy.sh) (free, no account), and on a
-Pebble watch the push shows up as a phone notification. See
-[`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#reliability-sweep-lock-alerts-and-pinning-2026-11-07) for why
-each part exists.
+phase uses [Healthchecks.io](https://healthchecks.io) (the free plan is enough), which runs off your
+server. Each part of the pipeline pings a check. When a part reports a failure, or its pings stop,
+Healthchecks.io notifies you by email, or by phone push or chat if you add those under
+**Integrations**. Because the alerting runs elsewhere, it also catches the whole server going down.
+See [`TROUBLESHOOTING.md`](TROUBLESHOOTING.md#reliability-sweep-lock-alerts-and-pinning-2026-11-07) for
+why each part exists.
 
 **Step 1 — create the two data tables** (n8n editor → **Overview → Data tables → Create**). The
 research workflow finds them by name:
@@ -351,31 +353,42 @@ Add one row to `pebble_research_lock`: `lockName` = `research`, `owner` empty, `
 date. The research workflow uses it as a lock, so only one run works at a time. The lock is safe
 against two runs starting in the same instant on Postgres (tested). On SQLite this is untested.
 
-**Step 2 — pick an ntfy topic and subscribe to it.** Generate a hard-to-guess name, put it in
-`docker/.env` as `NTFY_TOPIC`, and subscribe to it in the ntfy app on your phone:
+**Step 2 — create three checks** in a Healthchecks.io project (**Add Check**, then set the period
+and grace time):
 
-```bash
-echo "NTFY_TOPIC=pebble-research-$(openssl rand -hex 8)" >> docker/.env
-```
+| Check | Period | Grace | Pinged by |
+|---|---|---|---|
+| `pebble-research` | 30 minutes | 30 minutes | Research workflow at the end of every sweep; `/fail` from the alerts workflow when a run fails |
+| `pebble-watchdog` | 6 hours | 1 hour | Watchdog workflow; `/fail` when it finds a problem |
+| `pebble-host` | 15 minutes | 15 minutes | `scripts/pipeline-healthcheck.sh` from cron; `/fail` when a host check fails |
+
+Each check has a ping URL like `https://hc-ping.com/<uuid>`. Treat these like passwords. Put the
+`pebble-host` URL in `docker/.env` as `HEALTHCHECKS_HOST_PING_URL`.
 
 **Step 3 — import the alerts and watchdog workflows**, the same way as Phase 4 step 2:
-`n8n/workflows/pebble-research-alerts.json` and `n8n/workflows/pebble-research-watchdog.json`. In
-both, replace `YOUR-NTFY-TOPIC` with your topic and `https://YOUR-N8N-HOST` with your n8n URL. In the
-watchdog, attach your OpenRouter credential to **Check OpenRouter Credits**, and change its timezone
-in **Settings** if you're not in Europe/Warsaw.
+`n8n/workflows/pebble-research-alerts.json` and `n8n/workflows/pebble-research-watchdog.json`. Replace
+the placeholder ping URLs with your own:
+
+- `YOUR-PEBBLE-RESEARCH-CHECK-UUID`: in the research workflow's **Ping Healthchecks** node and in the
+  alerts workflow.
+- `YOUR-PEBBLE-WATCHDOG-CHECK-UUID`: in the watchdog's **Report To Healthchecks** node and in the
+  alerts workflow.
+
+In the watchdog, attach your OpenRouter credential to **Check OpenRouter Credits**, and change its
+timezone in **Settings** if you're not in Europe/Warsaw.
 
 **Step 4 — connect them.** Publish **Pebble Research → Alerts**. Then open **Settings** on both the
 research workflow and the watchdog, set **Error Workflow** to *Pebble Research → Alerts*, and publish
-both. To test the phone push, run the watchdog once from the editor: a manual run always sends its
-summary.
+both. Run the watchdog once from the editor: the `pebble-watchdog` check should turn green.
 
 What you get:
 
-- **A push for every failed run**, with the error and a link to the execution.
-- **A watchdog every 6 hours** that warns about low OpenRouter credit (under $2), notes that failed 3
+- **An alert for every failed run**, with the error, the node and a link to the execution in the ping
+  body. The next clean sweep marks the check up again.
+- **A watchdog every 6 hours** that reports low OpenRouter credit (under $2), notes that failed 3
   times, notes marked done without a backlink, and `Index Inbox/` notes waiting over a day.
-- **An "OK" summary every day at 09:05.** If that morning message stops arriving, n8n or the server
-  is down. This is the only signal for a full server outage, because every check runs on the server.
+- **An alert when pings stop**: n8n is down, the sweep or watchdog is broken, cron stopped, or the
+  server is off.
 
 **Step 5 — schedule the host check.** `scripts/pipeline-healthcheck.sh` covers what n8n can't check
 about itself: whether n8n and the other containers are running and healthy, whether SearXNG returns
@@ -386,9 +399,8 @@ crontab (`crontab -e`):
 */15 * * * * /path/to/repo/scripts/pipeline-healthcheck.sh >> $HOME/.pebble-pipeline-healthcheck.log 2>&1
 ```
 
-It reads `NTFY_TOPIC` and `VAULT_MIRROR_PATH` from `docker/.env`. Container names are set at the top
-of the script. It sends a problem once, repeats it every 6 hours while it lasts, and sends a recovery
-message when all checks pass again. Run it by hand first: it prints `OK` or the problems it found.
+It reads `HEALTHCHECKS_HOST_PING_URL` and `VAULT_MIRROR_PATH` from `docker/.env`, and the container
+names from the top of the script. Run it by hand first: it prints `OK` or the problems it found.
 
 **Step 6 — turn on update PRs.** Every image and package is pinned to an exact version, so nothing
 changes under you. To hear about new versions, install the free [Renovate](https://github.com/apps/renovate)

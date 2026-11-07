@@ -14,7 +14,7 @@
     },
     {
       "id": "bdb2b450-e7a4-4a40-8808-f6c342683a9a",
-      "name": "Push Alert To Phone",
+      "name": "Report Failure To Healthchecks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -23,10 +23,11 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh/",
+        "url": "={{ ($json.workflow?.name ?? '').includes('Watchdog') ? 'https://hc-ping.com/YOUR-PEBBLE-WATCHDOG-CHECK-UUID' : 'https://hc-ping.com/YOUR-PEBBLE-RESEARCH-CHECK-UUID' }}/fail",
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ topic: \"YOUR-NTFY-TOPIC\", title: \"Research run failed: \" + ($json.workflow?.name ?? \"unknown workflow\"), message: ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? \"No error message\") + \"\\nNode: \" + ($json.execution?.lastNodeExecuted ?? $json.trigger?.error?.node?.name ?? \"unknown\"), priority: 4, tags: [\"warning\"], click: $json.execution?.url ?? \"https://YOUR-N8N-HOST/home/executions\" }) }}",
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'Run failed: ' + ($json.workflow?.name ?? 'unknown workflow') + '\\nError: ' + ($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'no error message') + '\\nNode: ' + ($json.execution?.lastNodeExecuted ?? $json.trigger?.error?.node?.name ?? 'unknown') + '\\nExecution: ' + ($json.execution?.url ?? 'not saved') }}",
         "options": {
           "timeout": 15000
         }
@@ -41,7 +42,7 @@
       "main": [
         [
           {
-            "node": "Push Alert To Phone",
+            "node": "Report Failure To Healthchecks",
             "type": "main",
             "index": 0
           }

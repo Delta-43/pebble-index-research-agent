@@ -768,6 +768,32 @@
         },
         "options": {}
       }
+    },
+    {
+      "id": "0b67fd44-952f-4fed-915b-73bc5a4e1385",
+      "name": "Ping Healthchecks",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1360,
+        432
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://hc-ping.com/YOUR-PEBBLE-RESEARCH-CHECK-UUID",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ 'Sweep finished: ' + $('Pick Next Note').last().json.reason + ' (execution ' + $execution.id + ')' }}",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "notes": "Healthchecks.io check pebble-research expects this every 30 minutes. If it stops, n8n, the sweep or the server is down. Failed runs send /fail through the alerts workflow, and the next clean sweep clears it.",
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
     }
   ],
   "connections": {
@@ -1033,6 +1059,17 @@
           }
         ]
       ]
+    },
+    "Release Run Lock": {
+      "main": [
+        [
+          {
+            "node": "Ping Healthchecks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": false,
@@ -1057,6 +1094,10 @@
     {
       "name": "Check the result",
       "description": "Reads the original note back from disk. Only a note with a real backlink is marked done; anything else counts as a failed attempt."
+    },
+    {
+      "name": "Finish the run",
+      "description": "Releases the lock and pings Healthchecks.io, which alerts you if these pings stop arriving every 30 minutes."
     }
   ]
 }

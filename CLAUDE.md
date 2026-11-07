@@ -86,10 +86,12 @@ and 35,719 tokens instead of 20 calls and 158,590+. Full write-up in `docs/TROUB
 **Reliability work (2026-11-07)**: alerts, sweep, lock and pinning, after a failure-point review. All
 triggers now run one sweep (oldest unresearched `Index Inbox/` note, lock in n8n data table
 `pebble_research_lock`, attempts in `pebble_research_notes`, backlink read back before marking done).
-`Watch Inbox/` stays opt-in (webhook only, newest first) per the user's decision. Alerts go to ntfy
-(topic in `docker/.env`, not in git): `Pebble Research → Alerts` (error workflow), `Pebble Research →
-Watchdog` (every 6 hours, OK summary at 09:05), and `scripts/pipeline-healthcheck.sh` (host cron, every
-15 minutes). Images and packages are pinned; Renovate opens update PRs. The n8n, MinIO and cloudflared
+`Watch Inbox/` stays opt-in (webhook only, newest first) per the user's decision. Alerts go through
+Healthchecks.io (project "Pebble Automation"; checks `pebble-research`, `pebble-watchdog`,
+`pebble-host`). Ping URLs live in the live n8n workflows and in `docker/.env` (`HEALTHCHECKS_HOST_PING_URL`),
+and the project API key is `HEALTHCHECKS_API_KEY` in `docker/.env`. None of these are in git.
+`Pebble Research → Alerts` is the error workflow; `Pebble Research → Watchdog` runs every 6 hours;
+`scripts/pipeline-healthcheck.sh` runs from host cron every 15 minutes. Images and packages are pinned; Renovate opens update PRs. The n8n, MinIO and cloudflared
 compose files outside this repo (`~/.docker_configs/`) were pinned by hand with `.bak.<timestamp>`
 backups. SearXNG: Bing disabled (off-topic results), Yahoo enabled, `default_lang: en`. Details in
 `docs/TROUBLESHOOTING.md`.

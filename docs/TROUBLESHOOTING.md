@@ -503,11 +503,13 @@ self-hosted apps, adapted to n8n. Each one was tested on the live server.
   calling a tool. n8n counted it as a success. The workflow now reads the original note back from disk,
   and only a note with a backlink is marked done. Anything else goes down the failure path. The prompt
   now also says never to end a turn with only a plan.
-- **Alerts.** `Pebble Research → Alerts` (Error Trigger → ntfy) is the error workflow of the research
-  and watchdog workflows. `Pebble Research → Watchdog` checks credits and note states every 6 hours and
-  sends an OK summary at 09:05. `scripts/pipeline-healthcheck.sh` runs from cron on the host. With only
-  ntfy and no outside monitor, a full server outage can't send an alert. A missing morning summary is
-  the signal.
+- **Alerts (Healthchecks.io).** Three checks, each a dead man's switch: the research workflow pings
+  `pebble-research` after every sweep, `Pebble Research → Watchdog` pings `pebble-watchdog` every 6
+  hours, and `scripts/pipeline-healthcheck.sh` pings `pebble-host` from cron every 15 minutes. A
+  problem sends a `/fail` ping with the details in the body. `Pebble Research → Alerts` (Error
+  Trigger) is the error workflow of the research and watchdog workflows and sends their `/fail`.
+  Healthchecks.io runs off the server, so missing pings also catch the server going down. A first
+  version used ntfy push from the server itself, which can't report a server outage.
 - **Pinning.** Every image now has an exact tag (or a digest where upstream has no version tags), and
   every package in the two Dockerfiles has an exact version. `mcp-searxng` is pinned to a fixed upstream
   commit. `obsidian-mcp` is installed at build time instead of with `npx -y obsidian-mcp@2` on every

@@ -114,13 +114,13 @@
       ],
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const MAX_ATTEMPTS = 3;\nconst LOW_CREDITS_USD = 2;\nconst problems = [];\n\nconst cr = $('Check OpenRouter Credits').first()?.json ?? {};\nlet remaining = null;\nif (cr.data && typeof cr.data.total_credits === 'number') {\n  remaining = cr.data.total_credits - (cr.data.total_usage ?? 0);\n  if (remaining < LOW_CREDITS_USD) problems.push(`OpenRouter credits are low: $${remaining.toFixed(2)} left.`);\n} else {\n  problems.push(`Could not read OpenRouter credits: ${String(cr.error?.message ?? cr.error ?? 'no data').slice(0, 200)}`);\n}\n\nconst files = $('List Inbox Notes').all();\nconst texts = $('Extract Note Text').all();\nconst notes = {};\ntexts.forEach((item, i) => {\n  const src = files[item.pairedItem?.item ?? i] ?? files[i];\n  const bin = src?.binary?.data ?? {};\n  const dir = (bin.directory ?? '').replace(/^\\/vault-mirror\\/?/, '');\n  if (!dir || !bin.fileName) return;\n  notes[dir + '/' + bin.fileName] = { text: item.json.noteText ?? '', fileName: bin.fileName, dir };\n});\nif (Object.keys(notes).length === 0) problems.push('Could not list any inbox notes in the vault mirror.');\n\nconst rows = {};\nfor (const r of $input.all()) if (r.json.notePath) rows[r.json.notePath] = r.json;\n\nconst dayAgo = $now.minus({ days: 1 });\nlet researched24h = 0;\nfor (const r of Object.values(rows)) {\n  if (r.status === 'done' && r.updatedAt && DateTime.fromISO(r.updatedAt) > dayAgo) researched24h += 1;\n}\nfor (const [path, n] of Object.entries(notes)) {\n  const hasBacklink = n.text.includes('Researched:');\n  const row = rows[path];\n  if (hasBacklink) continue;\n  if (row && (row.attempts ?? 0) >= MAX_ATTEMPTS && row.status !== 'done') {\n    problems.push(`Gave up after ${row.attempts} attempts: ${path} (${String(row.lastError ?? '').slice(0, 120)})`);\n  } else if (row && row.status === 'done') {\n    problems.push(`Marked done but has no backlink: ${path}`);\n  } else if (n.dir === 'Index Inbox') {\n    // Watch Inbox/ is opt-in (researched only when its webhook fires), so only Index Inbox/ notes\n    // are expected to be researched automatically.\n    const m = n.fileName.match(/^(\\d{4}-\\d{2}-\\d{2})/);\n    if (m && DateTime.fromISO(m[1]) < $now.minus({ days: 1 })) problems.push(`Waiting for research for over a day: ${path}`);\n  }\n}\n\n// 09:05 always sends a summary, so a missing morning message means the watchdog itself stopped.\n// Manual (test) runs always send one too, to test the phone push.\nconst isDailySummary = $now.hour === 9 || $execution.mode !== 'production';\nif (problems.length === 0 && !isDailySummary) return [];\nconst title = problems.length ? `Pebble pipeline: ${problems.length} problem${problems.length > 1 ? 's' : ''}` : 'Pebble pipeline OK';\nconst summary = `${researched24h} note${researched24h === 1 ? '' : 's'} researched in the last 24 hours` + (remaining === null ? '.' : `, $${remaining.toFixed(2)} OpenRouter credit left.`);\nreturn [{ json: { title, message: (problems.length ? problems.join('\\n') + '\\n\\n' : '') + summary, priority: problems.length ? 4 : 2, tags: problems.length ? ['warning'] : ['white_check_mark'] } }];"
+        "jsCode": "const MAX_ATTEMPTS = 3;\nconst LOW_CREDITS_USD = 2;\nconst problems = [];\n\nconst cr = $('Check OpenRouter Credits').first()?.json ?? {};\nlet remaining = null;\nif (cr.data && typeof cr.data.total_credits === 'number') {\n  remaining = cr.data.total_credits - (cr.data.total_usage ?? 0);\n  if (remaining < LOW_CREDITS_USD) problems.push(`OpenRouter credits are low: $${remaining.toFixed(2)} left.`);\n} else {\n  problems.push(`Could not read OpenRouter credits: ${String(cr.error?.message ?? cr.error ?? 'no data').slice(0, 200)}`);\n}\n\nconst files = $('List Inbox Notes').all();\nconst texts = $('Extract Note Text').all();\nconst notes = {};\ntexts.forEach((item, i) => {\n  const src = files[item.pairedItem?.item ?? i] ?? files[i];\n  const bin = src?.binary?.data ?? {};\n  const dir = (bin.directory ?? '').replace(/^\\/vault-mirror\\/?/, '');\n  if (!dir || !bin.fileName) return;\n  notes[dir + '/' + bin.fileName] = { text: item.json.noteText ?? '', fileName: bin.fileName, dir };\n});\nif (Object.keys(notes).length === 0) problems.push('Could not list any inbox notes in the vault mirror.');\n\nconst rows = {};\nfor (const r of $input.all()) if (r.json.notePath) rows[r.json.notePath] = r.json;\n\nconst dayAgo = $now.minus({ days: 1 });\nlet researched24h = 0;\nfor (const r of Object.values(rows)) {\n  if (r.status === 'done' && r.updatedAt && DateTime.fromISO(r.updatedAt) > dayAgo) researched24h += 1;\n}\nfor (const [path, n] of Object.entries(notes)) {\n  const hasBacklink = n.text.includes('Researched:');\n  const row = rows[path];\n  if (hasBacklink) continue;\n  if (row && (row.attempts ?? 0) >= MAX_ATTEMPTS && row.status !== 'done') {\n    problems.push(`Gave up after ${row.attempts} attempts: ${path} (${String(row.lastError ?? '').slice(0, 120)})`);\n  } else if (row && row.status === 'done') {\n    problems.push(`Marked done but has no backlink: ${path}`);\n  } else if (n.dir === 'Index Inbox') {\n    // Watch Inbox/ is opt-in (researched only when its webhook fires), so only Index Inbox/ notes\n    // are expected to be researched automatically.\n    const m = n.fileName.match(/^(\\d{4}-\\d{2}-\\d{2})/);\n    if (m && DateTime.fromISO(m[1]) < $now.minus({ days: 1 })) problems.push(`Waiting for research for over a day: ${path}`);\n  }\n}\n\n// Always report: a success ping when nothing is wrong, a /fail ping with the problems otherwise.\n// Healthchecks.io also alerts if these pings stop, so a dead watchdog can't go unnoticed.\nconst summary = `${researched24h} note${researched24h === 1 ? '' : 's'} researched in the last 24 hours` + (remaining === null ? '.' : `, $${remaining.toFixed(2)} OpenRouter credit left.`);\nreturn [{ json: { ok: problems.length === 0, body: (problems.length ? problems.join('\\n') + '\\n\\n' : '') + summary } }];"
       },
       "executeOnce": true
     },
     {
       "id": "b8e6c0bd-244b-44ab-bee0-f19b3d5cf99c",
-      "name": "Push Status To Phone",
+      "name": "Report To Healthchecks",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
@@ -129,10 +129,11 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "https://ntfy.sh/",
+        "url": "=https://hc-ping.com/YOUR-PEBBLE-WATCHDOG-CHECK-UUID{{ $json.ok ? '' : '/fail' }}",
         "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ topic: \"YOUR-NTFY-TOPIC\", title: $json.title, message: $json.message, priority: $json.priority, tags: $json.tags, click: \"https://YOUR-N8N-HOST/home/executions\" }) }}",
+        "contentType": "raw",
+        "rawContentType": "text/plain",
+        "body": "={{ $json.body }}",
         "options": {
           "timeout": 15000
         }
@@ -202,7 +203,7 @@
       "main": [
         [
           {
-            "node": "Push Status To Phone",
+            "node": "Report To Healthchecks",
             "type": "main",
             "index": 0
           }
